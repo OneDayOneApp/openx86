@@ -118,11 +118,12 @@ int main(int argc, char **argv) {
   bool halted = false, fatal = false;
   uint64_t arch_flags = 0x202;
   bool pend_valid = false;
+  bool commit_prev = false;
+  uint64_t commit_prev_pc = 0;
   uint64_t pend_pc = 0, pend_flags = 0;
   uint32_t pend_op = 0;
 
-  auto process_pending = [&]() {
-    if (!diff || !pend_valid) return;
+  auto call_diff = [&](uint64_t pc, uint64_t flags, uint32_t op) {
     uint64_t g[16] = {
         dut.io_dbg_gpr_0, dut.io_dbg_gpr_1, dut.io_dbg_gpr_2, dut.io_dbg_gpr_3,
         dut.io_dbg_gpr_4, dut.io_dbg_gpr_5, dut.io_dbg_gpr_6, dut.io_dbg_gpr_7,
@@ -161,7 +162,12 @@ int main(int argc, char **argv) {
     xv[14][1] = (uint64_t)dut.io_dbg_xmm_14[2] | ((uint64_t)dut.io_dbg_xmm_14[3] << 32);
     xv[15][0] = (uint64_t)dut.io_dbg_xmm_15[0] | ((uint64_t)dut.io_dbg_xmm_15[1] << 32);
     xv[15][1] = (uint64_t)dut.io_dbg_xmm_15[2] | ((uint64_t)dut.io_dbg_xmm_15[3] << 32);
-    difftest_step(pend_pc, g, xv, pend_flags, pend_op);
+    difftest_step(pc, g, xv, flags, op);
+  };
+
+  auto process_pending = [&]() {
+    if (!diff || !pend_valid) return;
+    call_diff(pend_pc, pend_flags, pend_op);
     pend_valid = false;
   };
 
@@ -276,16 +282,23 @@ int main(int argc, char **argv) {
     }
     trap_prev = dut.io_dbg_trapValid;
     process_pending();
-    if (dut.io_commit_valid) {
+    bool new_commit = dut.io_commit_valid &&
+                      (!commit_prev || dut.io_commit_pc != commit_prev_pc);
+    commit_prev = dut.io_commit_valid;
+    if (dut.io_commit_valid) commit_prev_pc = dut.io_commit_pc;
+    if (new_commit) {
       if (dut.io_commit_writesFlags) arch_flags = dut.io_commit_flags;
-      // Defer the architectural snapshot by one cycle so the debug GPRs have
-      // settled after the writeback edge.
       if (diff && dut.io_commit_op != 41 && !pend_valid) {
         pend_valid = true;
         pend_pc = dut.io_commit_pc;
-        pend_flags = arch_flags;
+        pend_flags = dut.io_commit_writesFlags ? dut.io_commit_flags : dut.io_dbg_flags;
         pend_op = dut.io_commit_op;
       }
+    }
+    if (dut.io_dbg_sysValid) {
+      // CPUID/LIDT/IRET update architectural state without a commit trace.
+      if (diff && !dut.io_dbg_sysTrap)
+        call_diff(dut.io_dbg_sysPc, dut.io_dbg_flags, dut.io_dbg_sysOp);
     }
     if (getenv("TRAPTRACE"))
       std::fprintf(stderr, "[cyc %llu] trap=%d halted=%d fatal=%d rip=0x%llx\n",

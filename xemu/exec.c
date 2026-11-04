@@ -540,7 +540,7 @@ int xemu_exec(const XemuInst *d) {
         if (xemu_mem_read(xemu.gpr[4], &vals[i], 8) != 0) return -1;
         xemu.gpr[4] += 8;
       }
-      xemu.rip = vals[0]; xemu.cs = vals[1]; xemu.rflags = vals[2];
+      xemu.rip = vals[0]; xemu.cs = vals[1]; xemu.rflags = vals[2] | 2;
       xemu.gpr[4] = vals[3]; xemu.ss = vals[4];
       return 0;
     }

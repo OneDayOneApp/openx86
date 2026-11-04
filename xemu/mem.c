@@ -120,6 +120,6 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
     xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &err, 8);
   }
   xemu.cs = sel;
-  xemu.rflags = old_flags & ~(1ull << 9); /* clear IF */
+  xemu.rflags = old_flags & ~(1ull << 9); /* interrupt gate clears IF */
   xemu.rip = handler;
 }

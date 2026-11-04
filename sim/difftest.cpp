@@ -87,11 +87,19 @@ bool difftest_step(uint64_t pc, const uint64_t gpr[16],
 
   diff_state ref{};
   ref_regcpy(&ref, DIFFTEST_TO_DUT);
+  if (getenv("DIFFTRACE"))
+    std::fprintf(stderr, "[diff] step pc=0x%llx ref=0x%llx after_trap=%d\n",
+                 (unsigned long long)pc, (unsigned long long)ref.rip, (int)after_trap);
   if (after_trap) {
     // Commits belonging to the DUT's trap-entry microcode (LIDT/IRET/CPUID
     // style) do not correspond to architectural instructions the reference
     // executed. Drop them until the first handler instruction retires.
-    if (ref.rip != pc) return true;
+    if (ref.rip != pc) {
+      if (getenv("DIFFTRACE"))
+        std::fprintf(stderr, "[diff] drop commit pc=0x%llx (ref=0x%llx)\n",
+                     (unsigned long long)pc, (unsigned long long)ref.rip);
+      return true;
+    }
     after_trap = false;
   }
   // Stage-A branches/CALL/RET that redirect in EX do not produce a commit
