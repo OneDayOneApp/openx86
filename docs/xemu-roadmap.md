@@ -97,7 +97,7 @@ Unicorn 不覆盖：分页、IDT、异常投递、CPL、设备、外部中断。
 - 原子：CMPXCHG、CMPXCHG8B/16B
 - SSE2 扩展：PADD/PSUB 全宽度、PCMPEQ/PCMPGT、PSHUF、PUNPCK、
   PMOVMSKB、MASKMOVDQU、MOVNT、更多 CVT
-- 进度：字符串 MOVS/STOS/LODS/SCAS/CMPS + REP 已完成，Unicorn 向量 9900/9900
+- 进度：字符串 + REP、BSF/BSR、BT/BTS/BTR/BTC、CMPXCHG/8B/16B 已完成，Unicorn 向量 11600/11600
 - 验收：每类指令 Unicorn 向量全过；fuzz 覆盖新 op
 
 ### P3 — 系统模式与中断（3–4 周）

@@ -146,6 +146,8 @@ def base_mn(asm):
     m = mnemo(asm)
     if m in {"rep", "repe", "repne"}:
         m = asm.split()[1]
+    if m in {"cmpxchg8b", "cmpxchg16b"}:
+        return m
     return re.sub(r"[bwlq]$", "", m)
 
 
@@ -160,6 +162,10 @@ def flag_mask(asm):
         mask = 0
     if base in LOGIC:
         mask &= ~(1<<FLAG_AF)
+    if base in {"bsf", "bsr"}:
+        mask = (1 << FLAG_ZF)  # only ZF is defined
+    if base in {"cmpxchg8b", "cmpxchg16b"}:
+        mask = (1 << FLAG_ZF)
     return mask
 
 
@@ -181,6 +187,8 @@ def check(asm, code, rng):
     st = rand_state(rng)
     mem = bytes(rng.getrandbits(8) for _ in range(0x400))
     b = base_mn(asm)
+    if b in {"bt", "bts", "btr", "btc"}:
+        st.gpr[1] = rng.randrange(0, 64)
     if b in {"movs", "stos", "lods", "scas", "cmps"}:
         st.gpr[6] = DATA + 0x100
         st.gpr[7] = DATA + 0x200
@@ -257,6 +265,12 @@ TEMPLATES = [
     "lodsb", "lodsw", "lodsl", "lodsq",
     "cmpsb", "cmpsw", "cmpsl", "cmpsq",
     "scasb", "scasw", "scasl", "scasq",
+    "bsfq {r1}, {r2}", "bsrq {r1}, {r2}", "bsfl {r1d}, {r2d}", "bsfw {r1w}, {r2w}",
+    "btq %rcx, {r1}", "btsq %rcx, {r1}", "btrq %rcx, {r1}", "btcq %rcx, {r1}",
+    "btq $13, {r1}", "btsq $13, {r1}", "btrq $13, {r1}", "btcq $13, {r1}",
+    "cmpxchgq {r1}, {r2}", "cmpxchgl {r1d}, {r2d}",
+    "cmpxchgq {r1}, 0x30(%r14)",
+    "cmpxchg8b 0x30(%r14)", "cmpxchg16b 0x30(%r14)",
     "rep movsb", "rep movsq", "rep stosb", "rep stosq",
     "rep lodsb", "rep lodsq", "repe cmpsb", "repne scasb",
     "sete %cl", "setne %cl", "setl %cl", "setg %cl",

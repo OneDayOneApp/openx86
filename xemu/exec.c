@@ -278,6 +278,90 @@ int xemu_exec(const XemuInst *d) {
     case Ops_MOVS: case Ops_STOS: case Ops_LODS: case Ops_SCAS: case Ops_CMPS:
       do_string(d);
       break;
+    case Ops_BSF: case Ops_BSR: {
+      uint64_t v = read_op(d, 0, sz) & mask_of(sz);
+      if (v == 0) {
+        setf(F_ZF, 1);
+      } else {
+        setf(F_ZF, 0);
+        int idx = 0;
+        if (op == Ops_BSF) {
+          while (!((v >> idx) & 1)) idx++;
+        } else {
+          idx = sz * 8 - 1;
+          while (!((v >> idx) & 1)) idx--;
+        }
+        write_reg(d->a_idx, (uint64_t)idx, sz);
+      }
+      break;
+    }
+    case Ops_BT: case Ops_BTS: case Ops_BTR: case Ops_BTC: {
+      uint64_t a = read_op(d, 1, sz);
+      uint64_t off = (d->b_kind == XK_IMM) ? d->imm : read_reg(d->b_idx, sz);
+      off &= (uint64_t)(sz * 8 - 1);
+      setf(F_CF, (a >> off) & 1);
+      if (op != Ops_BT) {
+        uint64_t m = 1ull << off;
+        if (op == Ops_BTS) a |= m;
+        else if (op == Ops_BTR) a &= ~m;
+        else a ^= m;
+        write_op(d, 1, a, sz);
+      }
+      break;
+    }
+    case Ops_CMPXCHG: {
+      uint64_t src = read_op(d, 0, sz);
+      uint64_t dst = read_op(d, 1, sz);
+      uint64_t acc = read_reg(0, sz);
+      uint64_t r = (acc - dst) & mask_of(sz);
+      sub_flags(acc, dst, r, sz, 0);
+      set_szp(r, sz);
+      if (dst == acc) {
+        setf(F_ZF, 1);
+        write_op(d, 1, src, sz);
+      } else {
+        setf(F_ZF, 0);
+        if (d->a_kind == XK_GPR && sz == 4) write_reg(d->a_idx, dst, sz);
+        write_reg(0, dst, sz);
+      }
+      break;
+    }
+    case Ops_CMPXCHG8B: {
+      int n = d->memsz ? d->memsz : 8;
+      uint8_t buf[16];
+      if (xemu_vread(ea(d), buf, n) != 0) {
+        if (!xemu_fault_pending) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); xemu_fault_pending = 1; }
+        break;
+      }
+      uint64_t lo = 0, hi = 0;
+      for (int i = 0; i < 8; i++) lo |= (uint64_t)buf[i] << (8 * i);
+      for (int i = 8; i < 16; i++) hi |= (uint64_t)buf[i] << (8 * (i - 8));
+      if (n == 8) {
+        uint64_t cmp = ((xemu.gpr[2] & 0xffffffff) << 32) | (xemu.gpr[0] & 0xffffffff);
+        if (lo == cmp) {
+          setf(F_ZF, 1);
+          uint64_t nv = ((xemu.gpr[1] & 0xffffffff) << 32) | (xemu.gpr[3] & 0xffffffff);
+          xemu_vwrite(ea(d), &nv, 8);
+        } else {
+          setf(F_ZF, 0);
+          xemu.gpr[0] = lo & 0xffffffff;
+          xemu.gpr[2] = lo >> 32;
+        }
+      } else {
+        if (lo == xemu.gpr[0] && hi == xemu.gpr[2]) {
+          setf(F_ZF, 1);
+          uint64_t nlo = xemu.gpr[3], nhi = xemu.gpr[1];
+          uint8_t out[16];
+          for (int i = 0; i < 8; i++) out[i] = (uint8_t)(nlo >> (8 * i));
+          for (int i = 0; i < 8; i++) out[8 + i] = (uint8_t)(nhi >> (8 * i));
+          xemu_vwrite(ea(d), out, 16);
+        } else {
+          setf(F_ZF, 0);
+          xemu.gpr[0] = lo; xemu.gpr[2] = hi;
+        }
+      }
+      break;
+    }
     case Ops_MOV:
       if (d->a_kind == XK_XMM || d->b_kind == XK_XMM) return -1;
       write_op(d, 1, read_op(d, 0, d->memsz ? d->memsz : sz), sz);
