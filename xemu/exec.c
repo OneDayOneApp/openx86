@@ -656,23 +656,41 @@ int xemu_exec(const XemuInst *d) {
       }
       break;
     }
+    case Ops_LTR: {
+      uint64_t sel = read_reg(d->a_idx, 2) & 0xffff;
+      uint64_t base = 0, limit = 0; uint32_t access = 0;
+      if (xemu_gdt_read(sel, &base, &limit, &access) != 0) return -1;
+      xemu.tr_sel = (uint16_t)sel;
+      xemu.tr_base = base;
+      xemu.tr_limit = limit;
+      break;
+    }
+    case Ops_LGDT:
     case Ops_LIDT: {
       uint8_t b[10];
       if (xemu_mem_read(ea(d), b, 10) != 0) return -1;
-      xemu.idtr_limit = (uint16_t)(b[0] | (b[1] << 8));
       uint64_t base = 0;
       for (int i = 0; i < 8; i++) base |= (uint64_t)b[2 + i] << (8 * i);
-      xemu.idtr_base = base;
+      if (op == Ops_LGDT) {
+        xemu.gdtr_limit = (uint16_t)(b[0] | (b[1] << 8));
+        xemu.gdtr_base = base;
+      } else {
+        xemu.idtr_limit = (uint16_t)(b[0] | (b[1] << 8));
+        xemu.idtr_base = base;
+      }
       break;
     }
     case Ops_IRET: {
+      /* The RTL IRET microcode always pops the 5-slot frame. */
       uint64_t vals[5];
       for (int i = 0; i < 5; i++) {
         if (xemu_mem_read(xemu.gpr[4], &vals[i], 8) != 0) return -1;
         xemu.gpr[4] += 8;
       }
+      int new_cpl = (int)(vals[1] & 3);
       xemu.rip = vals[0]; xemu.cs = vals[1]; xemu.rflags = vals[2] | 2;
       xemu.gpr[4] = vals[3]; xemu.ss = vals[4];
+      xemu.cpl = new_cpl;
       return 0;
     }
     case Ops_CPUID: {
@@ -714,14 +732,10 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_SYSCALL:
-      xemu.gpr[1] = xemu.rip + d->len;
-      xemu.gpr[11] = xemu.rflags;
-      xemu.rflags &= ~xemu.sfmask;
-      xemu.rip = xemu.lstar;
+      xemu_do_syscall(xemu.rip + d->len);
       return 0;
     case Ops_SYSRET:
-      xemu.rip = xemu.gpr[1];
-      xemu.rflags = xemu.gpr[11];
+      xemu_do_sysret();
       return 0;
     case Ops_INVLPG:
       break;
@@ -731,15 +745,61 @@ int xemu_exec(const XemuInst *d) {
     case Ops_INT3:
       xemu_raise_exc(3, 0, xemu.rip + d->len);
       return 0;
-    case Ops_INT:
-      xemu_raise_exc(d->imm & 0xff, 0, xemu.rip + d->len);
+    case Ops_INT: {
+      uint64_t vec = d->imm & 0xff;
+      /* DPL check: INT n is only allowed if gate DPL >= CPL. */
+      if (vec < 32) {
+        uint8_t gate[16];
+        if (xemu_mem_read(xemu.idtr_base + vec * 16, gate, 16) == 0) {
+          uint64_t low = 0;
+          for (int i = 0; i < 8; i++) low |= (uint64_t)gate[i] << (8 * i);
+          int dpl = (int)((low >> 45) & 3);
+          if (xemu.cpl > dpl) {
+            xemu_raise_exc(13, (uint64_t)(vec << 3) | 2, xemu.rip + d->len);
+            return 0;
+          }
+        }
+      }
+      xemu_raise_exc(vec, 0, xemu.rip + d->len);
       return 0;
+    }
     default:
       fprintf(stderr, "[xemu] unsupported op=%u at rip=0x%llx\n", op,
               (unsigned long long)xemu.rip);
       return -1;
   }
-  if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
+  if (xemu_fault_pending) { xemu_fault_pending = 0; xemu_timer_tick(); return 0; }
   xemu.rip += d->len;
+  xemu_timer_tick();
+  if (xemu.irq_pending) {
+    int vec = xemu.irq_pending;
+    if (xemu.rflags & (1ull << 9)) {
+      xemu.irq_pending = 0;
+      xemu_raise_exc((uint64_t)vec, 0, xemu.rip);
+    }
+  }
   return 0;
+}
+
+void xemu_do_syscall(uint64_t next_rip) {
+  xemu.gpr[1] = next_rip;
+  xemu.gpr[11] = xemu.rflags;
+  xemu.rflags &= ~xemu.sfmask;
+  xemu.rip = xemu.lstar;
+  /* STAR[47:32] holds the kernel CS selector. */
+  uint32_t cs = (uint32_t)((xemu.star >> 32) & 0xffff);
+  if (cs) { xemu.cs = cs; xemu.ss = (cs + 8) | 0; xemu.cpl = 0; }
+}
+
+void xemu_do_sysret(void) {
+  xemu.rip = xemu.gpr[1];
+  xemu.rflags = xemu.gpr[11] | 2;
+  /* SYSRET returns to CPL3 with CS = STAR[63:48]+16, SS = CS+8. */
+  uint32_t base = (uint32_t)((xemu.star >> 48) & 0xffff);
+  if (base) {
+    uint32_t cs = (base + 16) | 3;
+    xemu.cs = cs;
+    xemu.ss = (cs + 8) | 3;
+    xemu.cpl = 3;
+  }
 }

@@ -272,7 +272,6 @@ int xemu_sse_exec(const XemuInst *d) {
       int lanes = 16 / bytes;
       Vec128 r = zero_vec();
       for (int i = 0; i < lanes / 2; i++) {
-        uint64_t m = bytes == 8 ? ~0ull : ((1ull << (bytes * 8)) - 1);
         int ai = (high ? lanes / 2 : 0) + i;
         int bi = (high ? lanes / 2 : 0) + i;
         uint64_t av = get_lane(dst, ai, bytes);

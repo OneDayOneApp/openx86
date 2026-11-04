@@ -146,6 +146,8 @@ enum {
   Ops_PUNPCKHQDQ = 145,
   Ops_PMOVMSKB = 146,
   Ops_MOVNTDQ = 147,
+  Ops_LTR = 148,
+  Ops_LGDT = 149,
   Ops_UNDEF = 255,
 };
 
