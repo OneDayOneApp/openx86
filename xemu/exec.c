@@ -307,7 +307,7 @@ int xemu_exec(const XemuInst *d) {
         /* two/three-operand IMUL: dest = rm * (imm or dest) */
         int64_t src = (int64_t)(read_op(d, 0, sz) << (64 - bits)) >> (64 - bits);
         int64_t mult;
-        if (d->imm != 0) mult = (int64_t)(d->imm << (64 - bits)) >> (64 - bits);
+        if (d->imm_kind != 0) mult = (int64_t)(d->imm << (64 - bits)) >> (64 - bits);
         else mult = (int64_t)(read_reg(d->a_idx, sz) << (64 - bits)) >> (64 - bits);
         __int128 full = (__int128)src * mult;
         uint64_t r = (uint64_t)full & mask_of(sz);
