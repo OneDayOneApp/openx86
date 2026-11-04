@@ -77,7 +77,11 @@ make emu-fuzz             # 随机程序 fuzz（默认 200 个种子）
 - [docs/stage-a.md](docs/stage-a.md)：顺序核结构与指令覆盖
 - [docs/verification.md](docs/verification.md)：测试矩阵、性能、限制
 - [docs/emu_testplan.md](docs/emu_testplan.md)：emu 逐指令测试计划
-- [docs/xemu-plan.md](docs/xemu-plan.md)：XEMU（自研参考模拟器）研发计划
+- [xemu/README.md](xemu/README.md)：XEMU（自研参考模拟器）
+- [xemu/docs/plan.md](xemu/docs/plan.md)：XEMU 研发计划
+- [xemu/docs/roadmap.md](xemu/docs/roadmap.md)：XEMU 路线图（P1–P6）
+- [xemu/docs/linux-plan.md](xemu/docs/linux-plan.md)：XEMU Linux 启动计划（L0–L4）
+- [xemu/docs/linux-testplan.md](xemu/docs/linux-testplan.md)：XEMU Linux 测试用例与门禁
 
 ### 已知限制
 
@@ -162,7 +166,11 @@ make emu-fuzz             # random-program fuzzing (200 seeds by default)
 - [docs/stage-a.md](docs/stage-a.md) — in-order core structure and ISA coverage
 - [docs/verification.md](docs/verification.md) — test matrix, performance, limitations
 - [docs/emu_testplan.md](docs/emu_testplan.md) — emu per-instruction test plan
-- [docs/xemu-plan.md](docs/xemu-plan.md) — XEMU (self-written reference model) plan
+- [xemu/README.md](xemu/README.md) — XEMU (self-written reference model)
+- [xemu/docs/plan.md](xemu/docs/plan.md) — XEMU development plan
+- [xemu/docs/roadmap.md](xemu/docs/roadmap.md) — XEMU roadmap (P1-P6)
+- [xemu/docs/linux-plan.md](xemu/docs/linux-plan.md) — XEMU Linux boot plan (L0-L4)
+- [xemu/docs/linux-testplan.md](xemu/docs/linux-testplan.md) — XEMU Linux test cases and gates
 
 ### Known limitations
 

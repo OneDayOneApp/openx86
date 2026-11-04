@@ -1,7 +1,7 @@
 # XEMU
 
 自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，用于替换 `emu` 中的 Unicorn 参考模型。
-总体计划见 [../docs/xemu-plan.md](../docs/xemu-plan.md)。
+文档：[计划](docs/plan.md)、[路线图](docs/roadmap.md)、[Linux 启动计划](docs/linux-plan.md)、[Linux 测试计划](docs/linux-testplan.md)。
 
 ## M0 状态（已完成）
 

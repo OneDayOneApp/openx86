@@ -3,8 +3,10 @@
 目标：让 XEMU 能按 Linux 官方 **64-bit Boot Protocol** 直接引导一个
 `vmlinuz`/`vmlinux` + initramfs，跑到串口控制台与用户态 `/init`（静态 busybox shell）。
 
-对齐 `docs/xemu-roadmap.md` 的 P4（NEMU 工具链）与 P5（设备），本文件把它们
+对齐 [roadmap.md](roadmap.md) 的 P4（NEMU 工具链）与 P5（设备），本文件把它们
 重排为面向"能跑 Linux"的 L0–L4 里程碑。
+
+测试用例与回归门禁见 [linux-testplan.md](linux-testplan.md)。
 
 ---
 
