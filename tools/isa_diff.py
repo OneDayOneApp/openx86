@@ -189,6 +189,12 @@ def check(asm, code, rng):
     b = base_mn(asm)
     if b in {"bt", "bts", "btr", "btc"}:
         st.gpr[1] = rng.randrange(0, 64)
+    if ("*%rcx" in asm) or ("*0x30(%r14)" in asm):
+        tgt = ENTRY + 0x100
+        st.gpr[1] = tgt
+        mem = bytearray(mem)
+        mem[0x30:0x38] = tgt.to_bytes(8, "little")
+        mem = bytes(mem)
     if b in {"movs", "stos", "lods", "scas", "cmps"}:
         st.gpr[6] = DATA + 0x100
         st.gpr[7] = DATA + 0x200
@@ -254,6 +260,18 @@ TEMPLATES = [
     "movd {r1d}, %xmm0", "movd %xmm0, {r1d}", "movq {r1}, %xmm0", "movq %xmm0, {r1}",
     "movdqa %xmm1, %xmm0", "paddd %xmm1, %xmm0", "psubd %xmm1, %xmm0",
     "pand %xmm1, %xmm0", "por %xmm1, %xmm0", "pxor %xmm1, %xmm0",
+    "paddb %xmm1, %xmm0", "paddw %xmm1, %xmm0", "paddq %xmm1, %xmm0",
+    "psubb %xmm1, %xmm0", "psubw %xmm1, %xmm0", "psubq %xmm1, %xmm0",
+    "pcmpeqb %xmm1, %xmm0", "pcmpeqw %xmm1, %xmm0", "pcmpeqd %xmm1, %xmm0",
+    "pcmpgtb %xmm1, %xmm0", "pcmpgtw %xmm1, %xmm0", "pcmpgtd %xmm1, %xmm0",
+    "pshufd $0x1b, %xmm1, %xmm0",
+    "punpcklbw %xmm1, %xmm0", "punpcklwd %xmm1, %xmm0",
+    "punpckldq %xmm1, %xmm0", "punpcklqdq %xmm1, %xmm0",
+    "punpckhbw %xmm1, %xmm0", "punpckhwd %xmm1, %xmm0",
+    "punpckhdq %xmm1, %xmm0", "punpckhqdq %xmm1, %xmm0",
+    "pmovmskb %xmm1, {r1d}",
+    "movntdq %xmm1, 0x30(%r14)",
+    "jmp *%rcx", "call *%rcx", "jmp *0x30(%r14)", "call *0x30(%r14)",
     "addsd %xmm1, %xmm0", "subsd %xmm1, %xmm0", "mulsd %xmm1, %xmm0",
     "divsd %xmm1, %xmm0", "sqrtsd %xmm1, %xmm0", "minsd %xmm1, %xmm0", "maxsd %xmm1, %xmm0",
     "addss %xmm1, %xmm0", "mulss %xmm1, %xmm0", "sqrtss %xmm1, %xmm0",

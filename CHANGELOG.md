@@ -7,12 +7,14 @@
 - `tools/isa_diff.py` + `make isa-diff`：Unicorn 作为逐指令标准
   - 71 个指令模板 × 随机 GPR/XMM/flags/内存
   - 标量 SS/SD NaN 语义、未定义 flags 掩码、MOVD/MOVQ 高位容差
-  - 当前 **7100/7100** 通过
+  - 当前 **14300/14300** 通过
 - 修复：三操作数 IMUL 立即数为 0、CVT 越界返回 indefinite、标量 FP NaN 比较
 - P2：字符串 MOVS/STOS/LODS/SCAS/CMPS + REP/REPNE（DF、RCX 计数）
 - 修复 CVTSS2SD/CVTSD2SS NaN payload 转换（quiet 位与载荷移位）
 - P2：BSF/BSR、BT/BTS/BTR/BTC、CMPXCHG/CMPXCHG8B/16B
 - 修复 CMPXCHG flags 方向与 32 位目标零扩展
+- P2：SSE2 整数（PADDB/W/Q、PSUBB/W/Q、PCMPEQB/W/D、PCMPGTB/W/D、PSHUFD/HW/LW、
+  PUNPCKL/H、PMOVMSKB、MOVNTDQ）与内存间接 CALL/JMP
 
 ### 新增
 
