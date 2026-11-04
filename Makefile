@@ -67,6 +67,18 @@ ooo-sim: ooo-rtl
 ooo-test: ooo-sim core-sim
 	python3 tools/ooo_regress.py
 
+sys-diff-test: core-sim xemu-so
+	python3 tools/sysrun.py tests/system/t22_cr.S --diff
+	python3 tools/sysrun.py tests/system/t23_paging.S --diff
+	python3 tools/sysrun.py tests/system/t25_trap.S --diff
+	python3 tools/sysrun.py tests/system/t26_pf_trap.S --diff
+	python3 tools/sysrun.py tests/system/t27_iret.S --diff
+	python3 tools/sysrun.py tests/system/t28_syscall.S --diff
+	python3 tools/sysrun.py tests/system/t29_cpuid.S --diff
+	python3 tools/sysrun.py tests/system/t30_invlpg.S --diff
+	python3 tools/sysrun.py tests/system/t31_fetchpf.S --diff
+	python3 tools/sysrun.py tests/system/t32_intn.S --diff
+
 sys-test: core-sim
 	python3 tools/sysrun.py tests/system/t22_cr.S
 	python3 tools/sysrun.py tests/system/t23_paging.S

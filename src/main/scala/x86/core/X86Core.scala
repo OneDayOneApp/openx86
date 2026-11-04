@@ -49,6 +49,10 @@ class X86Core extends Module {
       val exB = UInt(64.W)
       val aluA = UInt(64.W)
       val aluB = UInt(64.W)
+      val trapValid = Bool()
+      val trapVec = UInt(8.W)
+      val trapErr = UInt(32.W)
+      val trapPc = UInt(64.W)
     })
   })
 
@@ -1177,5 +1181,10 @@ class X86Core extends Module {
   io.dbg.exB := exB
   io.dbg.aluA := aluA
   io.dbg.aluB := aluB
+  // Register the trap request so the testbench can sample it reliably after an edge.
+  io.dbg.trapValid := RegNext(trapReq, false.B)
+  io.dbg.trapVec := RegNext(trapReqVec, 0.U)
+  io.dbg.trapErr := RegNext(trapReqErr, 0.U)
+  io.dbg.trapPc := RegNext(trapReqPc, 0.U)
   for (i <- 0 until 16) { io.dbg.xmm(i) := xmm.io.dbg(i) }
 }

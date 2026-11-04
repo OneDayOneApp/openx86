@@ -29,7 +29,13 @@ static Vec128 zero_vec(void) { Vec128 v; v.u[0] = v.u[1] = 0; return v; }
 
 static int ld_vec(uint64_t addr, int n, Vec128 *v) {
   uint8_t b[16] = {0};
-  if (xemu_mem_read(addr, b, n) != 0) return -1;
+  if (xemu_vread(addr, b, n) != 0) {
+    if (!xemu_fault_pending) {
+      xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+      xemu_fault_pending = 1;
+    }
+    return -1;
+  }
   *v = zero_vec();
   memcpy(v->u, b, n);
   return 0;
@@ -37,7 +43,7 @@ static int ld_vec(uint64_t addr, int n, Vec128 *v) {
 static void st_vec(uint64_t addr, int n, Vec128 v) {
   uint8_t b[16];
   memcpy(b, v.u, 16);
-  xemu_mem_write(addr, b, n);
+  xemu_vwrite(addr, b, n);
 }
 
 static uint64_t ea(const XemuInst *d) {

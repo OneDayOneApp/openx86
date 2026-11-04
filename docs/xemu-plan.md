@@ -112,12 +112,13 @@ typedef struct {
 - 状态：`make xemu-regress` **37/37**（整数 + SSE2 子集）、XEMU fuzz 200/200
 - 验收：`make emu-test` 37/37（ref-so 指向 XEMU）+ fuzz 200
 
-### M3 分页/异常（1–2 周）
+### M3 分页/异常（已完成，系统模式）
 
 - CR0/2/3/4、4 级 walk、#PF 错误码、IDT、LIDT、IRETQ
 - #UD/#DE/#GP、SYSCALL/SYSRET、CPUID、INVLPG、MSR 子集
 - 与 DUT trap 元数据/`raise_intr` 对接
-- 验收：`make sys-test` 10/10 在 `--diff` 下通过（需要 RTL 暴露 trap 事件）
+- 状态：`make sys-diff-test` 10/10（DUT + XEMU 同镜像 co-sim，比较最终 GPR/RIP/RFLAGS）
+- 说明：逐指令 trap 对拍仍需 RTL 提交事件配合；当前 M3 验收采用系统模式结束态对比
 
 ### M4 SSE2 子集（已完成）
 

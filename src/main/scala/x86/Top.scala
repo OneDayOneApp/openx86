@@ -38,6 +38,10 @@ class X86Top extends Module {
       val aluA = UInt(64.W)
       val aluB = UInt(64.W)
       val xmm = Vec(16, UInt(128.W))
+      val trapValid = Bool()
+      val trapVec = UInt(8.W)
+      val trapErr = UInt(32.W)
+      val trapPc = UInt(64.W)
     })
   })
 

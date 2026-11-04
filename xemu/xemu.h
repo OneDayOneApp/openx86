@@ -25,6 +25,7 @@ typedef struct {
   uint64_t cr0, cr2, cr3, cr4;
   uint64_t idtr_base;
   uint16_t idtr_limit;
+  uint64_t cs, ss;
   uint64_t efer, star, lstar, sfmask;
   uint64_t fs_base, gs_base;
   int halted;
@@ -54,6 +55,14 @@ void xemu_reset(void);
 
 int xemu_mem_read(uint64_t addr, void *buf, size_t n);
 int xemu_mem_write(uint64_t addr, const void *buf, size_t n);
+
+/* Virtual-memory access (identity when paging is disabled). */
+int xemu_vread(uint64_t va, void *buf, size_t n);
+int xemu_vwrite(uint64_t va, const void *buf, size_t n);
+int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
+void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
+extern uint64_t xemu_fault_err;
+extern int xemu_fault_pending;
 
 /* Returns 0 on success, negative on unsupported/invalid instruction. */
 int xemu_decode(uint64_t rip, XemuInst *out);

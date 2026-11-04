@@ -224,7 +224,12 @@ static int64_t sext(uint64_t v, int bits) {
 int xemu_decode(uint64_t rip, XemuInst *out) {
   init_tables();
   uint8_t buf[16];
-  if (xemu_mem_read(rip, buf, 16) != 0) return -1;
+  uint64_t pa, ferr;
+  if (xemu_translate(rip, 0, 1, &pa, &ferr) != 0) {
+    xemu_raise_exc(14, ferr, rip);
+    return 1; /* fetched exception */
+  }
+  if (xemu_vread(rip, buf, 16) != 0) return -1;
   memset(out, 0, sizeof(*out));
 
   int off = 0, p66 = 0, p67 = 0, rep = 0, lock = 0, rex = 0, rex_valid = 0;

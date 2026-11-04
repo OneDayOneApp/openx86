@@ -262,6 +262,19 @@ int main(int argc, char **argv) {
                   (int)dut.io_commit_writesFlags, (unsigned long long)dut.io_commit_flags, (unsigned)dut.io_commit_op,
                   (unsigned long long)dut.io_dbg_gpr_0, (unsigned long long)dut.io_dbg_gpr_3);
 
+    static bool trap_prev = false;
+    static uint64_t trap_prev_pc = 0, trap_prev_vec = 0;
+    if (diff && dut.io_dbg_trapValid) {
+      uint64_t tpc = dut.io_dbg_trapPc, tvec = dut.io_dbg_trapVec;
+      if (!trap_prev || tpc != trap_prev_pc || tvec != trap_prev_vec) {
+        // The faulting instruction never retires; drop any stale pending
+        // comparison and deliver the exception in the reference model.
+        pend_valid = false;
+        difftest_raise_intr_ex(tvec, dut.io_dbg_trapErr, tpc);
+      }
+      trap_prev_pc = tpc; trap_prev_vec = tvec;
+    }
+    trap_prev = dut.io_dbg_trapValid;
     process_pending();
     if (dut.io_commit_valid) {
       if (dut.io_commit_writesFlags) arch_flags = dut.io_commit_flags;
@@ -274,6 +287,23 @@ int main(int argc, char **argv) {
         pend_op = dut.io_commit_op;
       }
     }
+    if (getenv("TRAPTRACE"))
+      std::fprintf(stderr, "[cyc %llu] trap=%d halted=%d fatal=%d rip=0x%llx\n",
+                   (unsigned long long)cycle, (int)dut.io_dbg_trapValid,
+                   (int)dut.io_halted, (int)dut.io_fatal,
+                   (unsigned long long)dut.io_dbg_rip);
+    if (getenv("TRAPTRACE") && dut.io_dbg_trapValid)
+      std::fprintf(stderr, "[trap] valid vec=%u err=0x%llx pc=0x%llx\n",
+                   (unsigned)dut.io_dbg_trapVec, (unsigned long long)dut.io_dbg_trapErr,
+                   (unsigned long long)dut.io_dbg_trapPc);
+    if (diff && dut.io_dbg_trapValid) {
+      uint64_t pc = dut.io_dbg_trapPc;
+      uint64_t vec = dut.io_dbg_trapVec;
+      if (!trap_prev || pc != trap_prev_pc || vec != trap_prev_vec)
+        difftest_raise_intr_ex(vec, dut.io_dbg_trapErr, pc);
+      trap_prev_pc = pc; trap_prev_vec = vec;
+    }
+    trap_prev = dut.io_dbg_trapValid;
     halted = dut.io_halted;
     fatal = dut.io_fatal;
     if (halted || fatal) { cycle++; break; }

@@ -43,11 +43,14 @@ void difftest_regcpy(void *dut, int direction) {
   }
 }
 
+int difftest_halted(void) { return xemu.halted; }
+
 void difftest_exec(uint64_t n) {
   if (skip_ref) { skip_ref = 0; return; }
   for (uint64_t k = 0; k < n; k++) {
     XemuInst inst;
     int rc = xemu_decode(xemu.rip, &inst);
+    if (rc == 1) continue; /* fetch fault delivered */
     if (rc != 0) {
       fprintf(stderr, "[xemu] decode failed at rip=0x%llx (rc=%d)\n",
               (unsigned long long)xemu.rip, rc);
@@ -72,7 +75,10 @@ void difftest_exec(uint64_t n) {
 void difftest_skip_ref(void) { skip_ref = 1; }
 
 void difftest_raise_intr(uint64_t NO) {
-  fprintf(stderr, "[xemu] raise_intr(%llu) not implemented in M0\n",
-          (unsigned long long)NO);
-  abort();
+  xemu_raise_exc(NO, 0, xemu.rip);
+}
+
+/* Added for system-mode difftest: DUT supplies error code and faulting PC. */
+void difftest_raise_intr_ex(uint64_t NO, uint64_t err, uint64_t pc) {
+  xemu_raise_exc(NO, err, pc);
 }

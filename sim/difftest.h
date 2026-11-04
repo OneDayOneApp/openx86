@@ -18,6 +18,7 @@ void difftest_store(uint64_t addr, const uint8_t *data, uint32_t mask);
 bool difftest_check_load(uint64_t addr, const uint8_t *data, uint32_t mask);
 
 void difftest_skip_next();
+void difftest_raise_intr_ex(uint64_t vec, uint64_t err, uint64_t pc);
 void difftest_finish();
 
 #endif

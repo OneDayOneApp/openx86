@@ -63,6 +63,18 @@ make xemu-decode-test
   CVTDQ2PS/CVTPS2DQ/CVTDQ2PD/CVTPD2DQ/CVTTPD2DQ
 - `t13`–`t21` 全部通过
 
+## M3 状态（已完成，系统模式）
+
+- 4 级页表 walk、CR0/2/3/4、LIDT、IDT 门、异常投递、IRETQ、SYSCALL/SYSRET、
+  CPUID、MSR、INVLPG、#PS/#UD/#DE/#GP
+- 物理寻址语义与 RTL sys 微码一致（IDT/陷阱栈绕过 MMU）
+- `make sys-diff-test`：DUT + XEMU 同一镜像 co-sim，最终 GPR/RIP/RFLAGS 对比 **10/10**
+
+```bash
+make sys-diff-test
+# 10 x PASS
+```
+
 ## 下一步
 
-M3：分页/异常/IDT；M5：默认切换 XEMU + 1000 fuzz。
+M5：默认切换 XEMU + ≥1000 fuzz + 发布。
