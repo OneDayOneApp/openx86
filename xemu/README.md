@@ -77,6 +77,19 @@ make sys-diff-test
 # 10 x PASS
 ```
 
+## ISA 指令级对拍（Unicorn 标准）
+
+```bash
+make isa-diff
+# isa diff: 7100/7100 passed, 0 failed
+```
+
+`tools/isa_diff.py` 对每条指令：
+- 相同 GPR/XMM/RFLAGS/内存初始状态
+- Unicorn 与 XEMU 各执行一条
+- 比较 RIP/GPR/XMM/flags（未定义位掩码）/内存
+- 标量 SS/SD 按 32/64 位 NaN 语义比较
+
 ## NEMU 风格独立运行（xemu CLI）
 
 ```bash

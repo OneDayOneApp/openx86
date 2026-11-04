@@ -142,6 +142,10 @@ build/xemu: xemu/main.c xemu/decode.c xemu/exec.c xemu/mem.c xemu/sse.c xemu/sta
 
 xemu-bin: build/xemu
 
+.PHONY: isa-diff
+isa-diff: xemu-so
+	python3 tools/isa_diff.py 100 1
+
 xemu-test: emu xemu-so
 	python3 tools/difftest.py tests/emu/xemu_m0.S
 	./build/emu -i build/tests/xemu_m0.bin --ref-so=$(XEMU_SO)

@@ -285,9 +285,17 @@ int xemu_sse_exec(const XemuInst *d) {
     }
     case Ops_CVTTSS2SI: case Ops_CVTTSD2SI: case Ops_CVTSD2SI: {
       double v = (simd == S_SD) ? src.d[0] : (double)src.f[0];
-      int64_t iv = (int64_t)v;
-      if (d->opsz == 4) xemu.gpr[d->a_idx] = (uint32_t)(int32_t)iv;
-      else xemu.gpr[d->a_idx] = (uint64_t)iv;
+      if (d->opsz == 4) {
+        if (isnan(v) || v < -2147483648.0 || v > 2147483647.0)
+          xemu.gpr[d->a_idx] = 0x80000000ull;
+        else
+          xemu.gpr[d->a_idx] = (uint32_t)(int32_t)v;
+      } else {
+        if (isnan(v) || v < -9223372036854775808.0 || v >= 9223372036854775808.0)
+          xemu.gpr[d->a_idx] = 0x8000000000000000ull;
+        else
+          xemu.gpr[d->a_idx] = (uint64_t)(int64_t)v;
+      }
       break;
     }
     case Ops_CVTSS2SD: {
