@@ -12,6 +12,7 @@
 | [microarchitecture.md](microarchitecture.md) | v3.8 | 微架构手册：Stage-A 顺序流水线、Stage-B 乱序核、与昆明湖 V3 对照、验证与已知问题 |
 | [verification.md](verification.md) | v3.8 | 验证手册：测试矩阵、覆盖范围、性能观察、已知限制、复现命令、与 V3 的差距与路线 |
 | [emu_testplan.md](emu_testplan.md) | v1 | emu 逐指令测试计划：分层、随机 fuzz、未定义行为策略、覆盖矩阵、缺陷记录 |
+| [xemu-plan.md](xemu-plan.md) | v1 | XEMU 研发计划：自研 x86-64 参考模拟器、里程碑、接口、风险与验收 |
 | usage.md | 规划中 | 构建、仿真、调试指南 |
 
 ## 工程当前状态
