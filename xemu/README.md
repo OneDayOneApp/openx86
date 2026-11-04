@@ -69,7 +69,7 @@ make xemu-decode-test
   CPUID、MSR、INVLPG、#PS/#UD/#DE/#GP
 - 物理寻址语义与 RTL sys 微码一致（IDT/陷阱栈绕过 MMU）
 - `make sys-diff-test`：DUT + XEMU 同一镜像 co-sim，最终 GPR/RIP/RFLAGS 对比 **10/10**
-- 实验性逐指令 lockstep：**9/10**（t27 的 IRET 恢复 flags 与 RTL 存在差异，待对齐）
+- 实验性逐指令 lockstep：**9/10**（t27：RTL 陷阱栈 RFLAGS 槽写入 0x97，与体系结构 flags 0x246 不符，需 RTL 侧定位）
 
 ```bash
 make sys-diff-test
