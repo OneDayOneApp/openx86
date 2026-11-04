@@ -90,12 +90,12 @@ typedef struct {
 
 ## 5. 里程碑与验收
 
-### M0 骨架与 ABI（1–2 天）
+### M0 骨架与 ABI（已完成）
 
 - `xemu/` 目录、Makefile `xemu-so` → `build/ref/libxemu.so`
-- 实现 init/memcpy/regcpy/exec/skip_ref 空壳
-- `emu --ref-so=build/ref/libxemu.so` 能加载并跑通一条 `mov`
-- 验收：最小镜像逐指令对拍通过
+- 实现 init/memcpy/regcpy/exec/skip_ref
+- 最小指令：`MOV r64, imm64`、`HLT`
+- 验收：`tests/emu/xemu_m0.S` 逐指令对拍通过（`make xemu-test`）
 
 ### M1 解码器（3–5 天）
 
