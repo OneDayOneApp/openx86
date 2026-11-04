@@ -1,3 +1,15 @@
+## Unreleased — 文档整理
+
+### 变更
+
+- XEMU 文档统一收纳到 `xemu/docs/`：
+  - `plan.md`（原 `docs/xemu-plan.md`）
+  - `roadmap.md`（原 `docs/xemu-roadmap.md`）
+  - `linux-plan.md`（原 `docs/xemu-linux-plan.md`）
+  - `linux-testplan.md`（新增：Linux 启动测试计划，156 个用例）
+  - `README.md`（XEMU 文档索引）
+- `docs/README.md` 与根 `README.md` 的 XEMU 条目改为指向 `xemu/docs/`
+
 # Changelog
 
 ## Unreleased — P3 系统模式（CPL3/TSS/外部中断/timer）

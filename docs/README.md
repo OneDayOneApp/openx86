@@ -15,7 +15,11 @@ The documents are primarily written in Chinese; the table below is the English i
 | [microarchitecture.md](microarchitecture.md) | v3.8 | Microarchitecture manual: Stage-A, Stage-B, comparison with Kunminghu V3, verification and known issues |
 | [verification.md](verification.md) | v3.8 | Verification manual: test matrix, coverage, performance, limitations, reproduce commands, gap to V3 |
 | [emu_testplan.md](emu_testplan.md) | v1 | emu per-instruction test plan: layers, fuzzing, undefined-behavior policy, coverage, defects |
-| [xemu-plan.md](xemu-plan.md) | v1 | XEMU plan: self-written x86-64 reference model, milestones, interfaces, risks, acceptance |
+| [xemu/README.md](../xemu/README.md) | v0.3 | XEMU: self-written x86-64 reference model (overview, build, tests) |
+| [xemu/docs/plan.md](../xemu/docs/plan.md) | v1 | XEMU development plan: milestones, interfaces, risks, acceptance |
+| [xemu/docs/roadmap.md](../xemu/docs/roadmap.md) | v2 | XEMU roadmap: NEMU feature parity, Unicorn ISA oracle, P1-P6 |
+| [xemu/docs/linux-plan.md](../xemu/docs/linux-plan.md) | v3 | XEMU Linux boot plan: L0-L4 (port I/O, boot protocol, x87, memory permissions) |
+| [xemu/docs/linux-testplan.md](../xemu/docs/linux-testplan.md) | v1 | XEMU Linux test cases (156 TCs), gates, failure archiving |
 | usage.md | planned | Build, simulation and debugging guide |
 
 中文索引（同下）：
@@ -30,9 +34,11 @@ The documents are primarily written in Chinese; the table below is the English i
 | [microarchitecture.md](microarchitecture.md) | v3.8 | 微架构手册：Stage-A 顺序流水线、Stage-B 乱序核、与昆明湖 V3 对照、验证与已知问题 |
 | [verification.md](verification.md) | v3.8 | 验证手册：测试矩阵、覆盖范围、性能观察、已知限制、复现命令、与 V3 的差距与路线 |
 | [emu_testplan.md](emu_testplan.md) | v1 | emu 逐指令测试计划：分层、随机 fuzz、未定义行为策略、覆盖矩阵、缺陷记录 |
-| [xemu-plan.md](xemu-plan.md) | v1 | XEMU 研发计划：自研 x86-64 参考模拟器、里程碑、接口、风险与验收 |
-| [xemu-roadmap.md](xemu-roadmap.md) | v2 | XEMU 开发计划 v2：对齐 NEMU 功能、Unicorn 指令验证标准、P1–P6 阶段与验收 |
-| [xemu-linux-plan.md](xemu-linux-plan.md) | v3 | XEMU Linux 启动计划：L0–L4 里程碑（端口 IO/设备、boot protocol、x87、内存权限、工具链） |
+| [xemu/README.md](../xemu/README.md) | v0.3 | XEMU 自研 x86-64 参考模拟器：概览、构建、测试 |
+| [xemu/docs/plan.md](../xemu/docs/plan.md) | v1 | XEMU 研发计划：里程碑、接口、风险与验收 |
+| [xemu/docs/roadmap.md](../xemu/docs/roadmap.md) | v2 | XEMU 路线图：对齐 NEMU 功能、Unicorn 指令验证标准、P1–P6 |
+| [xemu/docs/linux-plan.md](../xemu/docs/linux-plan.md) | v3 | XEMU Linux 启动计划：L0–L4（端口 IO/设备、boot protocol、x87、内存权限、工具链） |
+| [xemu/docs/linux-testplan.md](../xemu/docs/linux-testplan.md) | v1 | XEMU Linux 测试计划：156 个用例、回归门禁、失败归档 |
 | usage.md | 规划中 | 构建、仿真、调试指南 |
 
 ## 工程当前状态
