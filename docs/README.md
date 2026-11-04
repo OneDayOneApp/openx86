@@ -2,6 +2,24 @@
 
 本目录存放 OpenX86 处理器项目的设计与验证文档。
 
+This directory contains the design and verification documents for OpenX86.
+The documents are primarily written in Chinese; the table below is the English index.
+
+| Document | Status | Description |
+| --- | --- | --- |
+| [PRD.md](PRD.md) | draft v0.1 | Product requirements: scope, ISA subset, microarchitecture (vs. Kunminghu V3), verification, milestones, risks |
+| [stage-a.md](stage-a.md) | implemented | In-order core structure, ISA coverage, verification results and limitations |
+| [open-source-x86-survey.md](open-source-x86-survey.md) | 2026-11-03 | Survey of open-source x86 processors/chips: projects, licenses, x86-64 gap, lessons |
+| [x86-companies.md](x86-companies.md) | 2026-11-03 | Map of x86 chip companies: Intel/AMD, VIA/Zhaoxin/Hygon, DM&P/RDC, Montage, history and market |
+| architecture.md | planned | Architecture manual: encoding, registers, exceptions, paging, instruction semantics |
+| [microarchitecture.md](microarchitecture.md) | v3.8 | Microarchitecture manual: Stage-A, Stage-B, comparison with Kunminghu V3, verification and known issues |
+| [verification.md](verification.md) | v3.8 | Verification manual: test matrix, coverage, performance, limitations, reproduce commands, gap to V3 |
+| [emu_testplan.md](emu_testplan.md) | v1 | emu per-instruction test plan: layers, fuzzing, undefined-behavior policy, coverage, defects |
+| [xemu-plan.md](xemu-plan.md) | v1 | XEMU plan: self-written x86-64 reference model, milestones, interfaces, risks, acceptance |
+| usage.md | planned | Build, simulation and debugging guide |
+
+中文索引（同下）：
+
 | 文档 | 状态 | 说明 |
 | --- | --- | --- |
 | [PRD.md](PRD.md) | v0.1 草稿 | 产品需求文档：范围、ISA 子集、微架构（对标昆明湖 V3）、验证、里程碑、风险 |
