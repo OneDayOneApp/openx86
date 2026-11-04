@@ -43,6 +43,7 @@ typedef struct {
   int64_t disp;
   uint8_t base, index, scale;
   int rip_rel;
+  int has_base, has_index;
   int illegal;
 } XemuInst;
 

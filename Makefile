@@ -132,7 +132,10 @@ $(XEMU_FIELD_TEST): xemu/decode.c xemu/decode_field_test.c xemu/mem.c xemu/state
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
 	  xemu/decode.c xemu/mem.c xemu/state.c xemu/decode_field_test.c -o $@
 
-.PHONY: xemu-decode-test
+.PHONY: xemu-regress xemu-decode-test
+xemu-regress: emu xemu-so
+	python3 tools/xemu_regress.py
+
 xemu-decode-test: decode-sim decode-vectors $(XEMU_DECODE_TEST) $(XEMU_FIELD_TEST)
 	DUMP=1 $(DEC_OBJ)/decoder_tb $(DEC_DIR)/vectors.txt $(DEC_DIR)/image.bin > $(DEC_DIR)/dump.txt
 	$(XEMU_DECODE_TEST) $(DEC_DIR)/vectors.txt $(DEC_DIR)/image.bin
