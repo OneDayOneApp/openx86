@@ -133,6 +133,7 @@ static void init_tables(void) {
   set(twobyte, 0x32, DI(Ops_RDMSR, .modrm = 0));
   set(twobyte, 0x0b, DI(Ops_UD2, .modrm = 0));
   set(twobyte, 0x01, DI(Ops_UNDEF, .modrm = 1));
+  set(twobyte, 0x00, DI(Ops_UNDEF, .modrm = 1));
   set(twobyte, 0x1e, DI(Ops_ENDBR, .modrm = 1));
   set(twobyte, 0x1f, DI(Ops_NOP, .modrm = 1));
   set(twobyte, 0x10, DI(Ops_MOVPS, .modrm = 1, .dir = 1, .sse_sel = 1));
@@ -319,6 +320,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   int is2D = is0F && opcode == 0x2d && !is3;
   int is5B = is0F && opcode == 0x5b && !is3;
   int isLidt = is0F && opcode == 0x01 && !is3 && reg == 3;
+  int isGdtLtr = is0F && opcode == 0x01 && !is3;
   int isInvlpg = is0F && opcode == 0x01 && !is3 && reg == 7;
   if (isE6) op = p66 ? Ops_CVTTPD2DQ : (rep == 1 ? Ops_CVTDQ2PD : (rep == 2 ? Ops_CVTPD2DQ : Ops_UNDEF));
   else if (is5A) op = rep == 1 ? Ops_CVTSS2SD : (rep == 2 ? Ops_CVTSD2SS : Ops_UNDEF);
@@ -328,6 +330,11 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   else if (is5B) op = p66 ? Ops_CVTPS2DQ : Ops_CVTDQ2PS;
   else if (isLidt) op = Ops_LIDT;
   else if (isInvlpg) op = Ops_INVLPG;
+  if (isGdtLtr && !rm_is_reg) {
+    if (reg == 2) op = Ops_LGDT;
+    else if (reg == 3) op = Ops_LIDT;
+  }
+  if (is0F && opcode == 0x00 && rm_is_reg && reg == 3) op = Ops_LTR;
   if (is0F && opcode == 0xba) {
     static const int btops[8] = {0,0,0,0,Ops_BT,Ops_BTS,Ops_BTR,Ops_BTC};
     op = btops[reg];
@@ -570,6 +577,11 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_CVTTSD2SI || op == Ops_CVTTSS2SI || op == Ops_CVTSD2SI) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
     out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
+  }
+  if (op == Ops_LTR) {
+    out->a_kind = XK_GPR; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->opsz = 2;
   }
   if (op == Ops_PMOVMSKB) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);

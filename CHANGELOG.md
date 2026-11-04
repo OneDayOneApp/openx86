@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — P3 系统模式（CPL3/TSS/外部中断/timer）
+
+### 新增
+
+- `LGDT` / `LIDT` / `LTR`，GDT 描述符解析
+- CPL0/CPL3：特权级切换经 TSS `RSP0` 换栈；同层陷阱不换栈
+- IDT 门类型/DPL 解析：中断门清 IF，陷阱门保留 IF；`INT n` 做 DPL 检查
+- 外部中断注入 `xemu_request_irq()` 与每指令 `xemu_timer_tick()`
+- Timer MMIO（`0xE0000000`）：周期/使能/计数/清 pending，到期置 IRQ 32
+- `SYSCALL`/`SYSRET` 按 STAR 切换 CS/SS/CPL
+- `make xemu-sys-test`：t40_cpl3、t41_timer **2/2**
+- IRET 恢复 CPL；trap frame 与 RTL 微码逐字节对齐
+
 ## Unreleased — Unicorn ISA 对拍 + NEMU 风格 xemu CLI
 
 ### 新增

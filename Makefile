@@ -70,6 +70,11 @@ ooo-test: ooo-sim core-sim
 sys-lockstep-test: core-sim xemu-so
 	python3 tools/sys_lockstep.py
 
+xemu-sys-test: xemu-bin
+	python3 tools/xemu_sys.py
+
+xemu-all-test: xemu-so xemu-bin isa-diff xemu-sys-test sys-lockstep-test emu-test
+
 sys-diff-test: core-sim xemu-so
 	python3 tools/sysrun.py tests/system/t22_cr.S --diff
 	python3 tools/sysrun.py tests/system/t23_paging.S --diff

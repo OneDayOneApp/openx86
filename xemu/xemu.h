@@ -6,6 +6,7 @@
 
 #define XEMU_MEM_SIZE (16ull * 1024 * 1024)
 #define XEMU_MMIO_HALT 0xF0000000ull
+#define XEMU_MMIO_TIMER 0xE0000000ull
 #define XEMU_MMIO_SIZE 0x1000ull
 
 /* Operation ids aligned with the RTL Ops numbering where practical. */
@@ -28,6 +29,18 @@ typedef struct {
   uint64_t cs, ss;
   uint64_t efer, star, lstar, sfmask;
   uint64_t fs_base, gs_base;
+  /* P3: segmentation/TSS/privilege/interrupt state. */
+  uint64_t gdtr_base;
+  uint16_t gdtr_limit;
+  uint64_t tr_base;
+  uint16_t tr_sel;
+  uint64_t tr_limit;
+  int cpl;
+  int irq_pending;   /* external IRQ vector, 0 = none */
+  int irq_enabled;
+  uint64_t timer_period;
+  uint64_t timer_counter;
+  uint64_t tsc;
   int halted;
 } XemuState;
 
@@ -63,6 +76,14 @@ int xemu_vread(uint64_t va, void *buf, size_t n);
 int xemu_vwrite(uint64_t va, const void *buf, size_t n);
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
+/* Deliver an external interrupt (vector >= 32) if IF=1 and nothing is pending. */
+int xemu_request_irq(uint64_t vec);
+/* Advance the PIT-like timer; may set irq_pending. Called once per instruction. */
+void xemu_timer_tick(void);
+uint64_t xemu_read_tss_rsp0(void);
+int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *access);
+void xemu_do_syscall(uint64_t next_rip);
+void xemu_do_sysret(void);
 extern uint64_t xemu_fault_err;
 extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;

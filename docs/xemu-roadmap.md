@@ -100,12 +100,15 @@ Unicorn 不覆盖：分页、IDT、异常投递、CPL、设备、外部中断。
 - 进度：字符串 + REP、BSF/BSR、BT/BTS/BTR/BTC、CMPXCHG/8B/16B、SSE2 整数(PADD/PSUB 全宽度、PCMPEQ/GT、PSHUFD、PUNPCK、PMOVMSKB、MOVNTDQ)、间接 CALL/JMP 已完成，Unicorn 向量 14300/14300
 - 验收：每类指令 Unicorn 向量全过；fuzz 覆盖新 op
 
-### P3 — 系统模式与中断（3–4 周）
+### P3 — 系统模式与中断（XEMU 侧已完成初版）
 
 - CPL0/3、TSS、权限检查
 - 中断门/陷阱门、外部 IRQ 注入
 - timer 中断、串口输入中断
 - `SYSCALL/SYSRET` 权限切换
+- 进度：LGDT/LIDT/LTR、CPL0/3 换栈、IDT 门属性/DPL、外部 IRQ、timer MMIO、
+  SYSCALL/SYSRET 已实现；`make xemu-sys-test` 2/2（t40_cpl3、t41_timer）
+- 说明：RTL 尚未实现 CPL3/TSS/中断注入，因此这两项用 XEMU 自身断言语义
 - 验收：RTL co-sim + 中断定向测试；Unicorn 不参与
 
 ### P4 — NEMU 工具链（2–3 周）

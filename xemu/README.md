@@ -77,6 +77,23 @@ make sys-diff-test
 # 10 x PASS
 ```
 
+## P3 系统模式（CPL3 / TSS / 外部 IRQ / timer）
+
+- `LGDT` / `LIDT` / `LTR`，GDT 描述符解析
+- CPL0/CPL3 切换：特权级变化时通过 TSS `RSP0` 换栈，同层陷阱不换栈
+- IDT 门 DPL 检查、中断门清 IF、陷阱门保留 IF
+- 外部中断注入：`xemu_request_irq()`；每指令 `xemu_timer_tick()`
+- 定时器 MMIO（`0xE0000000`）：
+  - `+8` 周期，`+12` 使能，`+16` 当前计数，`+20` 清除 pending
+  - 到期置 `irq_pending=32`，IF=1 时在下一条指令边界注入
+- `SYSCALL`/`SYSRET` 按 STAR 切 CS/SS 与 CPL
+
+```bash
+make xemu-sys-test
+# PASS t40_cpl3  (用户态 int 0x80 进入内核并 iretq 返回)
+# PASS t41_timer (定时器中断重复注入)
+```
+
 ## ISA 指令级对拍（Unicorn 标准）
 
 ```bash

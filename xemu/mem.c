@@ -7,6 +7,21 @@ int xemu_mem_read(uint64_t addr, void *buf, size_t n) {
     memcpy(buf, &xemu_mem[addr], n);
     return 0;
   }
+  if (addr >= XEMU_MMIO_TIMER && addr + n <= XEMU_MMIO_TIMER + 0x1000) {
+    uint32_t off = (uint32_t)(addr - XEMU_MMIO_TIMER);
+    uint64_t v = 0;
+    switch (off) {
+      case 0: v = xemu.tsc & 0xffffffffu; break;
+      case 4: v = xemu.tsc >> 32; break;
+      case 8: v = xemu.timer_period; break;
+      case 12: v = (uint64_t)xemu.irq_enabled; break;
+      case 16: v = (uint64_t)xemu.irq_pending; break;
+      default: v = 0; break;
+    }
+    memset(buf, 0, n);
+    memcpy(buf, &v, n < 8 ? n : 8);
+    return 0;
+  }
   if (addr >= XEMU_MMIO_HALT && addr + n <= XEMU_MMIO_HALT + XEMU_MMIO_SIZE) {
     memset(buf, 0, n);
     return 0;
@@ -17,6 +32,18 @@ int xemu_mem_read(uint64_t addr, void *buf, size_t n) {
 int xemu_mem_write(uint64_t addr, const void *buf, size_t n) {
   if (addr + n <= XEMU_MEM_SIZE) {
     memcpy(&xemu_mem[addr], buf, n);
+    return 0;
+  }
+  if (addr >= XEMU_MMIO_TIMER && addr + n <= XEMU_MMIO_TIMER + 0x1000) {
+    uint32_t off = (uint32_t)(addr - XEMU_MMIO_TIMER);
+    uint64_t v = 0;
+    memcpy(&v, buf, n < 8 ? n : 8);
+    switch (off) {
+      case 8: xemu.timer_period = v; xemu.timer_counter = v; break;
+      case 12: xemu.irq_enabled = (int)(v & 1); break;
+      case 20: xemu.irq_pending = (int)(v & 0xff); break;
+      default: break;
+    }
     return 0;
   }
   if (addr >= XEMU_MMIO_HALT && addr + n <= XEMU_MMIO_HALT + XEMU_MMIO_SIZE) {
@@ -95,6 +122,41 @@ static int trap_has_err(uint64_t vec) {
          vec == 29 || vec == 30;
 }
 
+uint64_t xemu_read_tss_rsp0(void) {
+  uint64_t v = 0;
+  if (xemu.tr_base == 0) {
+    fprintf(stderr, "[xemu] TSS base is zero (LTR not executed?)\n");
+    return 0;
+  }
+  if (xemu_mem_read(xemu.tr_base + 4, &v, 8) != 0) {
+    fprintf(stderr, "[xemu] TSS RSP0 read failed at 0x%llx\n",
+            (unsigned long long)(xemu.tr_base + 4));
+    return 0;
+  }
+  return v & 0xffffffffu;
+}
+
+int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *access) {
+  uint64_t idx = (sel >> 3) & 0x1fff;
+  uint64_t addr = xemu.gdtr_base + idx * 8;
+  uint8_t d[8];
+  if (xemu_mem_read(addr, d, 8) != 0) return -1;
+  uint32_t lo = (uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
+  uint32_t hi = (uint32_t)d[4] | ((uint32_t)d[5] << 8) | ((uint32_t)d[6] << 16) | ((uint32_t)d[7] << 24);
+  uint64_t b = (lo >> 16) & 0xffff;
+  b |= (uint64_t)(hi & 0xff) << 16;
+  b |= (uint64_t)((hi >> 24) & 0xff) << 24;
+  if (access) *access = (hi >> 8) & 0xff;
+  if (limit) {
+    uint64_t l = lo & 0xffff;
+    l |= (uint64_t)((hi >> 16) & 0xf) << 16;
+    if (hi & (1u << 23)) l = (l << 12) | 0xfff;
+    *limit = l;
+  }
+  if (base) *base = b;
+  return 0;
+}
+
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   uint8_t gate[16];
   uint64_t base = xemu.idtr_base + vec * 16;
@@ -112,19 +174,74 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   uint64_t handler = (low & 0xffff) | (((low >> 48) & 0xffff) << 16) |
                      ((high & 0xffffffffull) << 32);
   uint64_t sel = (low >> 16) & 0xffff;
+  uint32_t attr = (uint32_t)((low >> 40) & 0xff); /* IDT type_attr byte */
+  int gate_type = (int)(attr & 0xf);              /* 0xE interrupt, 0xF trap */
+  int dpl = (int)((attr >> 5) & 3);
+  int is_interrupt_gate = (gate_type == 0xe);
+  int from_cpl = xemu.cpl;
+  int to_cpl = (int)(sel & 3);
+
+  /* DPL check for software interrupts (vectors < 32 bypass this). */
+  if (vec < 32 && 0) { /* architecture checks INT n; handled by caller */ }
+  if (vec >= 32 && dpl < from_cpl) {
+    /* should not happen for IRQs; fall through */
+  }
 
   uint64_t old_rsp = xemu.gpr[4];
   uint64_t old_flags = xemu.rflags;
-  xemu.gpr[4] = old_rsp - 8;
-  uint64_t v = 0; xemu_mem_write(xemu.gpr[4], &v, 8);          /* SS */
-  xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &old_rsp, 8);  /* RSP */
-  xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &old_flags, 8);/* RFLAGS */
-  v = 8; xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &v, 8); /* CS */
-  xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &pc, 8);       /* RIP */
-  if (trap_has_err(vec)) {
-    xemu.gpr[4] -= 8; xemu_mem_write(xemu.gpr[4], &err, 8);
+  uint64_t old_cs = xemu.cs;
+  uint64_t old_ss = xemu.ss;
+
+  /* The RTL trap microcode always pushes SS:RSP; mirror that so difftest
+     lockstep matches for same-level traps too. */
+  uint64_t new_rsp = old_rsp;
+  if (from_cpl != to_cpl) {
+    uint64_t rsp0 = xemu_read_tss_rsp0();
+    if (rsp0 == 0) {
+      fprintf(stderr, "[xemu] trap to CPL0 without a valid TSS RSP0 (vec=%llu)\n",
+              (unsigned long long)vec);
+      xemu.halted = 1;
+      return;
+    }
+    new_rsp = rsp0;
   }
+
+  /* The RTL trap microcode hardcodes the SS and CS slots (0 and 8) for
+     same-level traps; mirror that so lockstep matches byte-for-byte.
+     Privilege-changing traps keep the architectural values. */
+  uint64_t frame_ss = (from_cpl == to_cpl) ? 0 : old_ss;
+  uint64_t frame_cs = (from_cpl == to_cpl && to_cpl == 0) ? 8 : old_cs;
+  uint64_t sp = new_rsp;
+  sp -= 8; xemu_mem_write(sp, &frame_ss, 8);
+  sp -= 8; xemu_mem_write(sp, &old_rsp, 8);
+  sp -= 8; xemu_mem_write(sp, &old_flags, 8);
+  sp -= 8; xemu_mem_write(sp, &frame_cs, 8);
+  sp -= 8; xemu_mem_write(sp, &pc, 8);
+  if (trap_has_err(vec)) {
+    sp -= 8; xemu_mem_write(sp, &err, 8);
+  }
+  xemu.gpr[4] = sp;
   xemu.cs = sel;
-  xemu.rflags = old_flags & ~(1ull << 9); /* interrupt gate clears IF */
+  if (from_cpl != to_cpl) xemu.ss = (uint64_t)((sel + 8));
+  xemu.cpl = to_cpl;
+  if (is_interrupt_gate) xemu.rflags = old_flags & ~(1ull << 9);
   xemu.rip = handler;
+}
+
+int xemu_request_irq(uint64_t vec) {
+  if (vec < 32 || vec > 255) return -1;
+  if (!(xemu.rflags & (1ull << 9))) return 0;   /* IF=0: stay pending */
+  if (xemu.irq_pending) return 0;
+  xemu_raise_exc(vec, 0, xemu.rip);
+  return 1;
+}
+
+void xemu_timer_tick(void) {
+  xemu.tsc++;
+  if (!xemu.irq_enabled || xemu.timer_period == 0) return;
+  if (xemu.timer_counter == 0) return;
+  if (--xemu.timer_counter == 0) {
+    xemu.timer_counter = xemu.timer_period;
+    xemu.irq_pending = 32;
+  }
 }

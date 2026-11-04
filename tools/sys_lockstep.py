@@ -21,8 +21,16 @@ def assemble(src, name):
     return binp
 
 
+# Tests that the RTL implements today. Newer XEMU-only system tests (CPL3,
+# TSS, timer IRQ) are exercised by tools/xemu_sys.py instead.
+RTL_TESTS = [
+    "t22_cr", "t23_paging", "t25_trap", "t26_pf_trap", "t27_iret",
+    "t28_syscall", "t29_cpuid", "t30_invlpg", "t31_fetchpf", "t32_intn",
+]
+
+
 def main():
-    tests = sorted(glob.glob(os.path.join(ROOT, "tests", "system", "*.S")))
+    tests = [os.path.join(ROOT, "tests", "system", n + ".S") for n in RTL_TESTS]
     passed, failed = 0, []
     for src in tests:
         name = os.path.splitext(os.path.basename(src))[0]
