@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.1 — 系统模式逐指令 lockstep
+
+### 修复
+
+- **t27_iret**：UD2 陷阱改在 EX 阶段触发；sys 微码（trap/LIDT/IRET/CPUID）期间冻结流水线，
+  避免 UD2 之后的指令投机退休并污染陷阱帧 RFLAGS
+- CPUID 结果写入延后到微码 step2/3，避免前一条指令的快照竞争
+- 新增 `make sys-lockstep-test`：系统测试逐指令对拍 **10/10**
+
+### 验证
+
+| 套件 | 结果 |
+| --- | --- |
+| 系统模式 lockstep | **10/10** |
+| 系统模式 co-sim | 10/10 |
+| 用户态逐指令 | 37/37 |
+| Stage-A vs Unicorn | 37/37 |
+| Stage-B vs Stage-A | 29/29 |
+| 随机 fuzz（200 种子） | 200/200 |
+
 ## v0.2.0 — 自研 XEMU 参考模型
 
 ### 新增
