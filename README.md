@@ -38,11 +38,13 @@ make emu-fuzz             # 随机程序 fuzz（默认 200 个种子）
 ./build/emu -i build/tests/t1_basic.bin --no-diff
 ```
 
-> 参考模型 `.so` 的构建默认使用仓库内 `.home/pylibs/unicorn`（本机 vendored）。
+> `build/emu` 默认使用自研 **XEMU**（`xemu/`）。Unicorn 参考模型仍可选用：
+> `make ref-unicorn` 后 `./build/emu --ref-so=build/ref/libx86ref.so ...`。
+> Unicorn 的构建默认使用仓库内 `.home/pylibs/unicorn`（本机 vendored）。
 > 若使用系统 Python 包，可设置：
 > `make ref-so UNICORN_DIR=$(python3 -c 'import unicorn,os;print(os.path.dirname(unicorn.__file__))')`
 
-### 验证结果（v0.1.0）
+### 验证结果（v0.2.0）
 
 | 套件 | 结果 |
 | --- | --- |
@@ -50,8 +52,9 @@ make emu-fuzz             # 随机程序 fuzz（默认 200 个种子）
 | Stage-A vs Unicorn（结束态） | 37 / 37 |
 | 系统测试 | 10 / 10 |
 | Stage-B vs Stage-A（结束态） | 29 / 29 |
-| emu 逐指令对拍（GPR/XMM/RFLAGS/内存） | 37 / 37 |
-| 随机 fuzz 逐指令对拍 | 200/批，累计 360/360 |
+| emu 逐指令对拍（默认参考模型 XEMU） | 37 / 37 |
+| XEMU 系统模式 co-sim（含分页/异常） | 10 / 10 |
+| 随机 fuzz 逐指令对拍（XEMU） | **1000 / 1000** |
 | Scala 单测 | 21 / 21 |
 
 ### 目录
@@ -111,7 +114,7 @@ make regress              # Stage-A vs Unicorn 37/37
 make sys-test             # paging/exception/IDT system tests 10/10
 make ooo-test             # Stage-B vs Stage-A 29/29
 
-make emu                  # build build/emu + build/ref/libx86ref.so
+make emu                  # build build/emu (default reference: build/ref/libxemu.so)
 make emu-test             # per-instruction check of 37 user-mode tests
 make emu-fuzz             # random-program fuzzing (200 seeds by default)
 
@@ -119,11 +122,14 @@ make emu-fuzz             # random-program fuzzing (200 seeds by default)
 ./build/emu -i build/tests/t1_basic.bin --no-diff
 ```
 
-> The reference `.so` build uses the vendored `.home/pylibs/unicorn` by default.
+> `build/emu` uses the self-written **XEMU** (`xemu/`) by default. The Unicorn
+> reference model remains available: `make ref-unicorn`, then
+> `./build/emu --ref-so=build/ref/libx86ref.so ...`.
+> The Unicorn build uses the vendored `.home/pylibs/unicorn` by default.
 > To use a system-wide Python package:
 > `make ref-so UNICORN_DIR=$(python3 -c 'import unicorn,os;print(os.path.dirname(unicorn.__file__))')`
 
-### Results (v0.1.0)
+### Results (v0.2.0)
 
 | Suite | Result |
 | --- | --- |
@@ -131,8 +137,9 @@ make emu-fuzz             # random-program fuzzing (200 seeds by default)
 | Stage-A vs Unicorn (end state) | 37 / 37 |
 | System tests | 10 / 10 |
 | Stage-B vs Stage-A (end state) | 29 / 29 |
-| emu per-instruction (GPR/XMM/RFLAGS/memory) | 37 / 37 |
-| Random fuzz (per-instruction) | 200/batch, 360/360 cumulative |
+| emu per-instruction (default reference: XEMU) | 37 / 37 |
+| XEMU system-mode co-sim (paging/exceptions) | 10 / 10 |
+| Random fuzz (XEMU, per-instruction) | **1000 / 1000** |
 | Scala unit tests | 21 / 21 |
 
 ### Layout

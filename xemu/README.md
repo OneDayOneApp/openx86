@@ -75,6 +75,14 @@ make sys-diff-test
 # 10 x PASS
 ```
 
+## M5 状态（已完成）
+
+- `build/emu` 默认参考模型切换为 `build/ref/libxemu.so`（Unicorn 用 `make ref-unicorn` 可选）
+- `make emu-test`：37/37
+- 随机 fuzz：`python3 tools/emu_fuzz.py 1000 1` → **1000/1000**
+- `make sys-diff-test`：10/10
+- 发布 v0.2.0
+
 ## 下一步
 
-M5：默认切换 XEMU + ≥1000 fuzz + 发布。
+后续：逐指令 trap 对拍、更多 SSE2/字符串指令、性能优化。

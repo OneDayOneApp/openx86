@@ -127,11 +127,12 @@ typedef struct {
 - ADD/SUB/MUL/DIV/SQRT/MIN/MAX（标量+打包）、COMIS/UCOMIS、CVT 系列
 - 验收：SSE 定向用例 37/37、fuzz 200/200；NaN/部分写语义与 RTL 一致
 
-### M5 集成与替换（1 周）
+### M5 集成与替换（已完成）
 
 - `build/ref/libxemu.so` 替换 Unicorn 版
 - `emu-test`、`emu-fuzz`（≥1000 种子）、`sys-test` 全过
 - 性能目标：≥ 5 MIPS（本机单线程）
+- 状态：`REF_SO` 默认 `libxemu.so`；`make emu-test` 37/37；fuzz **1000/1000**；`make sys-diff-test` 10/10
 - 验收：CI 脚本一条命令
 
 ### M6 发布（2–3 天）
