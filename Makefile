@@ -136,6 +136,12 @@ $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared \
 	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
+build/xemu: xemu/main.c xemu/decode.c xemu/exec.c xemu/mem.c xemu/sse.c xemu/state.c xemu/xemu.h
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
+	  xemu/main.c xemu/decode.c xemu/exec.c xemu/mem.c xemu/sse.c xemu/state.c -o $@ -lm
+
+xemu-bin: build/xemu
+
 xemu-test: emu xemu-so
 	python3 tools/difftest.py tests/emu/xemu_m0.S
 	./build/emu -i build/tests/xemu_m0.bin --ref-so=$(XEMU_SO)

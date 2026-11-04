@@ -62,6 +62,7 @@ int xemu_vwrite(uint64_t va, const void *buf, size_t n);
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
 extern uint64_t xemu_fault_err;
+extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;
 
 /* Returns 0 on success, negative on unsupported/invalid instruction. */

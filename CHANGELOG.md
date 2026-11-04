@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — NEMU 风格 xemu CLI
+
+### 新增
+
+- `build/xemu`：独立 NEMU 风格运行器（不依赖 DUT/Verilator）
+  - `-i IMAGE`、`-b`、`--max-steps=N`、`--trace`
+  - 交互式 monitor：`si`、`info r`、`x`、`q`
+  - 失败时打印最后 16 条指令 ring buffer
+- `make xemu-bin`
+
 ## v0.2.1 — 系统模式逐指令 lockstep
 
 ### 修复
