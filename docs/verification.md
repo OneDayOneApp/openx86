@@ -176,9 +176,10 @@ build/obj_core/core_tb --diff --ref-so=build/ref/libx86ref.so <image.bin>
 | 项目 | 结果 |
 | --- | --- |
 | 用户态用例（tests/asm，paging 关闭） | **37/37** 通过逐指令对拍 |
-| 随机 fuzz（种子 1–360） | **360/360** 通过逐指令对拍 |
+| 随机 fuzz（种子 1–1000） | **1000/1000** 通过逐指令对拍（XEMU） |
 | 每条指令比较 | GPR×16 + XMM×16 + RFLAGS + PC + load 内存字节 |
 | 修复后回归 | Stage-A 37/37、系统 10/10、OoO 29/29、解码 693/693、单元 21/21 |
+| 系统模式 co-sim | `make sys-diff-test` 10/10（DUT vs XEMU 最终状态） |
 | 每条指令比较 | GPR×16 + RFLAGS（未定义位按指令掩码/同步） |
 | 内存 | 参考机自身执行 store；DUT load 与参考内存按字节校验 |
 

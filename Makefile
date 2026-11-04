@@ -92,13 +92,17 @@ sys-test: core-sim
 	python3 tools/sysrun.py tests/system/t32_intn.S
 
 # ---------------------------------------------------------------- NEMU-style difftest / emu
-REF_SO := build/ref/libx86ref.so
+# XEMU is the default reference model; the Unicorn-backed model stays available
+# via `make ref-unicorn`.
+REF_SO ?= build/ref/libxemu.so
+UNICORN_REF := build/ref/libx86ref.so
 UNICORN_DIR ?= $(CURDIR)/.home/pylibs/unicorn
 
-.PHONY: ref-so emu emu-test
-ref-so: $(REF_SO)
+.PHONY: ref-so ref-unicorn emu emu-test
+ref-unicorn: $(UNICORN_REF)
+ref-so: ref-unicorn
 
-$(REF_SO): ref/x86_ref.c ref/difftest_abi.h
+$(UNICORN_REF): ref/x86_ref.c ref/difftest_abi.h
 	@mkdir -p build/ref
 	/usr/bin/clang -isysroot $(SDK) -shared -fPIC -O2 -I $(UNICORN_DIR)/include \
 	  ref/x86_ref.c -L $(UNICORN_DIR)/lib -lunicorn.2 \
@@ -106,12 +110,12 @@ $(REF_SO): ref/x86_ref.c ref/difftest_abi.h
 
 # build/emu is the Verilator model + per-instruction difftest, mirroring
 # XiangShan's `build/emu --diff --ref-so=...`.
-emu: core-sim ref-so
-	@printf '#!/bin/sh\nROOT=%s\nexec "$$ROOT/build/obj_core/core_tb" --diff --ref-so="$$ROOT/build/ref/libx86ref.so" "$$@"\n' "$(CURDIR)" > build/emu
+emu: core-sim $(REF_SO)
+	@printf '#!/bin/sh\nROOT=%s\nexec "$$ROOT/build/obj_core/core_tb" --diff --ref-so="$$ROOT/%s" "$$@"\n' "$(CURDIR)" "$(REF_SO)" > build/emu
 	@chmod +x build/emu
-	@echo "built build/emu (usage: ./build/emu [--no-diff] <image.bin>)"
+	@echo "built build/emu (ref=$(REF_SO); usage: ./build/emu [--no-diff] <image.bin>)"
 
-emu-test: core-sim ref-so
+emu-test: emu
 	python3 tools/emu_regress.py
 
 emu-fuzz: emu
