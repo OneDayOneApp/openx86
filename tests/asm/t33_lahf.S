@@ -1,0 +1,9 @@
+.text
+.globl _start
+_start:
+    movq $0x800000, %rsp
+    movq $0x1234, %rax
+    cmpq $0x1234, %rax
+    lahf
+    movq $0xf0000000, %r15
+    movq $0, (%r15)
