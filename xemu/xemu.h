@@ -34,12 +34,16 @@ typedef struct {
   uint8_t len;
   uint16_t op;
   uint8_t opsz; /* 1/2/4/8 */
+  uint8_t simd;
+  uint8_t memsz;
+  uint8_t cond;
   uint8_t a_kind, b_kind;
   uint8_t a_idx, b_idx;
   uint64_t imm;
   int64_t disp;
   uint8_t base, index, scale;
   int rip_rel;
+  int illegal;
 } XemuInst;
 
 extern XemuState xemu;
