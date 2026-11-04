@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 static int skip_ref = 0;
 
@@ -52,7 +53,13 @@ void difftest_exec(uint64_t n) {
               (unsigned long long)xemu.rip, rc);
       abort();
     }
+    uint64_t before = xemu.rflags;
     rc = xemu_exec(&inst);
+    if (getenv("XEMUTRACE"))
+      fprintf(stderr, "[xemu] pc=0x%llx op=%u fl=0x%llx->0x%llx rip->0x%llx\n",
+              (unsigned long long)(xemu.rip - inst.len), (unsigned)inst.op,
+              (unsigned long long)before, (unsigned long long)xemu.rflags,
+              (unsigned long long)xemu.rip);
     if (rc != 0) {
       fprintf(stderr, "[xemu] exec failed at rip=0x%llx op=%u\n",
               (unsigned long long)xemu.rip, (unsigned)inst.op);

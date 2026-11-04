@@ -336,6 +336,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
 
   out->len = inst_len;
   out->op = op;
+  out->cond = opcode & 0xf;
   out->opsz = opsz;
   out->imm = imm;
   out->disp = disp;
@@ -355,6 +356,9 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   out->base = has_sib ? (sib_base | (rexB << 3)) : (rm | (rexB << 3));
   out->index = sib_idx | (rexX << 3);
   out->scale = sib_scale;
+  out->has_base = has_modrm && !rm_is_reg && !(mod == 0 && rm == 5 && !has_sib) &&
+                  !(has_sib && mod == 0 && sib_base == 5);
+  out->has_index = has_sib && !(sib_idx == 4 && !rexX);
   /* Keep the raw rm/sib-base id (the RTL exposes mem.base even when hasBase
    * is false; field-level difftest compares it). */
   out->rip_rel = has_modrm && !rm_is_reg && !has_sib && mod == 0 && rm == 5;
@@ -513,7 +517,8 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_CPUID) { out->a_kind = XK_GPR; out->a_idx = 0; out->b_kind = XK_NONE; }
   if (op == Ops_MOV_CR) {
     out->a_kind = dir == 1 ? XK_NONE : XK_GPR; out->a_idx = rm | (rexB << 3);
-    out->b_kind = XK_NONE; out->imm = (uint64_t)reg; out->cond = 0;
+    out->b_kind = XK_NONE; out->imm = (uint64_t)reg;
+    out->cond = (dir == 1) ? 1 : 0;
     out->illegal = 0;
   }
   if (op == Ops_RDMSR) { out->a_kind = XK_GPR; out->a_idx = 1; out->b_kind = XK_NONE; }

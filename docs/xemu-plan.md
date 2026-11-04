@@ -104,11 +104,12 @@ typedef struct {
 - 单元测试：复用 693 条解码向量；长度/合法性 + 字段级（op/simd/opsz/memsz/操作数/imm/base/index/disp）对拍
 - 验收：693/693（长度与字段均通过，`make xemu-decode-test`）
 
-### M2 整数执行（1–2 周）
+### M2 整数执行（整数部分已完成；SSE 归入 M4）
 
 - MOV/MOVZX/MOVSX/MOVSXD/LEA、ALU、移位/旋转、INC/DEC/NEG/NOT、MUL/IMUL/DIV/IDIV、
   CDQ/CQO/CBW、XCHG/XADD、CMP/TEST/SETcc/CMOVcc
 - 部分宽度（1/2/4/8）、flags 语义、内存读写、PUSH/POP/CALL/RET、JMP/JCC/LOOP*
+- 当前：`make xemu-regress` 27/37 通过（全部非 SSE 用例）；剩余 10 个 SSE/COMIS 用例在 M4 完成后达成 37/37
 - 验收：`make emu-test` 37/37（ref-so 指向 XEMU）+ fuzz 200
 
 ### M3 分页/异常（1–2 周）

@@ -137,6 +137,7 @@ bool difftest_step(uint64_t pc, const uint64_t gpr[16],
   if (op >= 23 && op <= 29) undef = (1ull << 11) | (1ull << 4);          // OF/AF
   else if (op == 19 || op == 20) undef = (1ull << 2) | (1ull << 4) | (1ull << 6) | (1ull << 7);
   else if (op == 21 || op == 22) undef = (1ull << 0) | (1ull << 2) | (1ull << 4) | (1ull << 6) | (1ull << 7) | (1ull << 11);
+  else if (op == 7 || op == 10 || op == 12 || op == 14) undef = (1ull << 4); /* logic AF undefined */
   mask &= ~undef;
   // Shift/rotate OF (and AF) are architecturally undefined except for count 1;
   // do not let QEMU's choice of undefined bits fail the comparison.
