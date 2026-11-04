@@ -174,6 +174,16 @@ static void init_tables(void) {
   set(twobyte, 0xc0, DI(Ops_XADD, .modrm = 1, .dir = 0, .force8 = 1));
   set(twobyte, 0xc1, DI(Ops_XADD, .modrm = 1, .dir = 0));
   set(twobyte, 0xe6, DI(Ops_CVTDQ2PD, .modrm = 1, .dir = 1));
+  set(twobyte, 0xbc, DI(Ops_BSF, .modrm = 1, .dir = 1));
+  set(twobyte, 0xbd, DI(Ops_BSR, .modrm = 1, .dir = 1));
+  set(twobyte, 0xa3, DI(Ops_BT, .modrm = 1, .dir = 0));
+  set(twobyte, 0xab, DI(Ops_BTS, .modrm = 1, .dir = 0));
+  set(twobyte, 0xb3, DI(Ops_BTR, .modrm = 1, .dir = 0));
+  set(twobyte, 0xbb, DI(Ops_BTC, .modrm = 1, .dir = 0));
+  set(twobyte, 0xba, DI(Ops_UNDEF, .modrm = 1, .imm = IMM_8));
+  set(twobyte, 0xb0, DI(Ops_CMPXCHG, .modrm = 1, .dir = 0, .force8 = 1));
+  set(twobyte, 0xb1, DI(Ops_CMPXCHG, .modrm = 1, .dir = 0));
+  set(twobyte, 0xc7, DI(Ops_UNDEF, .modrm = 1));
   set(twobyte, 0xdb, DI(Ops_SIMD_PAND, .modrm = 1, .dir = 1));
   set(twobyte, 0xeb, DI(Ops_SIMD_POR, .modrm = 1, .dir = 1));
   set(twobyte, 0xef, DI(Ops_SIMD_PXOR, .modrm = 1, .dir = 1));
@@ -295,6 +305,16 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   else if (is5B) op = p66 ? Ops_CVTPS2DQ : Ops_CVTDQ2PS;
   else if (isLidt) op = Ops_LIDT;
   else if (isInvlpg) op = Ops_INVLPG;
+  if (is0F && opcode == 0xba) {
+    static const int btops[8] = {0,0,0,0,Ops_BT,Ops_BTS,Ops_BTR,Ops_BTC};
+    op = btops[reg];
+    imm_kind = IMM_8;
+    dir = 0;
+  }
+  if (is0F && opcode == 0xc7 && reg == 1) {
+    op = Ops_CMPXCHG8B;
+    dir = 0;
+  }
 
   int rexW = (rex >> 3) & 1, rexR = (rex >> 2) & 1, rexX = (rex >> 1) & 1, rexB = rex & 1;
   int has_sib = has_modrm && !rm_is_reg && rm == 4;
@@ -512,6 +532,24 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_CVTTSD2SI || op == Ops_CVTTSS2SI || op == Ops_CVTSD2SI) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
     out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
+  }
+  if (op == Ops_BSF || op == Ops_BSR) {
+    out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
+    out->b_kind = rm_is_reg ? XK_GPR : XK_MEM; out->b_idx = rm | (rexB << 3);
+  }
+  if (op == Ops_BT || op == Ops_BTS || op == Ops_BTR || op == Ops_BTC) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM; out->a_idx = rm | (rexB << 3);
+    if (is0F && opcode == 0xba) out->b_kind = XK_IMM;
+    else { out->b_kind = XK_GPR; out->b_idx = reg | (rexR << 3); }
+  }
+  if (op == Ops_CMPXCHG) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_GPR; out->b_idx = reg | (rexR << 3);
+  }
+  if (op == Ops_CMPXCHG8B) {
+    out->a_kind = XK_MEM; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->memsz = rexW ? 16 : 8;
   }
   if (op == Ops_LIDT) {
     out->a_kind = rm_is_reg ? XK_NONE : XK_MEM; out->a_idx = rm | (rexB << 3);

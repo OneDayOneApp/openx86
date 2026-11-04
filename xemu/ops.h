@@ -113,6 +113,14 @@ enum {
   Ops_LOOPNE = 112,
   Ops_LOOPE = 113,
   Ops_JRCXZ = 114,
+  Ops_BSF = 115,
+  Ops_BSR = 116,
+  Ops_BT = 117,
+  Ops_BTS = 118,
+  Ops_BTR = 119,
+  Ops_BTC = 120,
+  Ops_CMPXCHG = 121,
+  Ops_CMPXCHG8B = 122,
   Ops_UNDEF = 255,
 };
 
