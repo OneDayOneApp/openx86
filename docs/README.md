@@ -32,6 +32,7 @@ The documents are primarily written in Chinese; the table below is the English i
 | [emu_testplan.md](emu_testplan.md) | v1 | emu 逐指令测试计划：分层、随机 fuzz、未定义行为策略、覆盖矩阵、缺陷记录 |
 | [xemu-plan.md](xemu-plan.md) | v1 | XEMU 研发计划：自研 x86-64 参考模拟器、里程碑、接口、风险与验收 |
 | [xemu-roadmap.md](xemu-roadmap.md) | v2 | XEMU 开发计划 v2：对齐 NEMU 功能、Unicorn 指令验证标准、P1–P6 阶段与验收 |
+| [xemu-linux-plan.md](xemu-linux-plan.md) | v3 | XEMU Linux 启动计划：L0–L4 里程碑（端口 IO/设备、boot protocol、x87、内存权限、工具链） |
 | usage.md | 规划中 | 构建、仿真、调试指南 |
 
 ## 工程当前状态
