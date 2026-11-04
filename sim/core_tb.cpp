@@ -276,6 +276,7 @@ int main(int argc, char **argv) {
         // The faulting instruction never retires; drop any stale pending
         // comparison and deliver the exception in the reference model.
         pend_valid = false;
+        arch_flags = (arch_flags & ~(1ull << 9)); /* interrupt gate clears IF */
         difftest_raise_intr_ex(tvec, dut.io_dbg_trapErr, tpc);
       }
       trap_prev_pc = tpc; trap_prev_vec = tvec;
@@ -291,14 +292,17 @@ int main(int argc, char **argv) {
       if (diff && dut.io_commit_op != 41 && !pend_valid) {
         pend_valid = true;
         pend_pc = dut.io_commit_pc;
-        pend_flags = dut.io_commit_writesFlags ? dut.io_commit_flags : dut.io_dbg_flags;
+        pend_flags = arch_flags;
         pend_op = dut.io_commit_op;
       }
     }
     if (dut.io_dbg_sysValid) {
       // CPUID/LIDT/IRET update architectural state without a commit trace.
-      if (diff && !dut.io_dbg_sysTrap)
-        call_diff(dut.io_dbg_sysPc, dut.io_dbg_flags, dut.io_dbg_sysOp);
+      if (!dut.io_dbg_sysTrap) {
+        arch_flags = dut.io_dbg_flags;
+        if (diff)
+          call_diff(dut.io_dbg_sysPc, arch_flags, dut.io_dbg_sysOp);
+      }
     }
     if (getenv("TRAPTRACE"))
       std::fprintf(stderr, "[cyc %llu] trap=%d halted=%d fatal=%d rip=0x%llx\n",

@@ -119,7 +119,7 @@ typedef struct {
 - 与 DUT trap 元数据/`raise_intr` 对接
 - 状态：`make sys-diff-test` 10/10（DUT + XEMU 同镜像 co-sim，比较最终 GPR/RIP/RFLAGS）
 - 说明：逐指令 trap 对拍仍需 RTL 提交事件配合；当前 M3 验收采用系统模式结束态对比
-- 进展：已暴露 sysop 完成事件并实现逐指令 lockstep，9/10 通过；t27 IRET flags 待对齐
+- 进展：已暴露 sysop 完成事件并实现逐指令 lockstep，9/10 通过；t27 的 RTL 陷阱栈 RFLAGS 槽为 0x97（非 0x246），需 RTL 修复后对齐
 
 ### M4 SSE2 子集（已完成）
 
