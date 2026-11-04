@@ -49,6 +49,12 @@ class X86Core extends Module {
       val exB = UInt(64.W)
       val aluA = UInt(64.W)
       val aluB = UInt(64.W)
+      val sysValid = Bool()
+      val sysPc = UInt(64.W)
+      val sysOp = UInt(8.W)
+      val sysTrap = Bool()
+      val sysVec = UInt(8.W)
+      val sysErr = UInt(32.W)
       val trapValid = Bool()
       val trapVec = UInt(8.W)
       val trapErr = UInt(32.W)
@@ -93,6 +99,9 @@ class X86Core extends Module {
   val trapErrR = Reg(UInt(32.W))
   val trapPcR  = Reg(UInt(64.W))
   val trapRspR = Reg(UInt(64.W))
+  val sysPcR = Reg(UInt(64.W))
+  val sysOpR = Reg(UInt(8.W))
+  val sysTrapR = RegInit(false.B)
   val trapHandlerR = Reg(UInt(64.W))
   val idtLowR = Reg(UInt(64.W))
   val lidtAddrR = Reg(UInt(64.W))
@@ -574,6 +583,9 @@ class X86Core extends Module {
     val leaf = exA(31, 0)
     sysActive := true.B
     sysOp := 3.U
+    sysPcR := idEx.uop.pc
+    sysOpR := Ops.CPUID.U
+    sysTrapR := false.B
     sysStep := 0.U
     sysWait := false.B
     cpuidEax := Mux(leaf === 0.U, 1.U,
@@ -593,6 +605,9 @@ class X86Core extends Module {
   when(idEx.valid && idEx.uop.op === Ops.IRET.U) {
     sysActive := true.B
     sysOp := 2.U
+    sysPcR := idEx.uop.pc
+    sysOpR := Ops.IRET.U
+    sysTrapR := false.B
     sysStep := 0.U
     sysWait := false.B
     trapRspR := gpr.io.rs7Data
@@ -603,6 +618,9 @@ class X86Core extends Module {
   when(idEx.valid && idEx.uop.op === Ops.LIDT.U) {
     sysActive := true.B
     sysOp := 1.U
+    sysPcR := idEx.uop.pc
+    sysOpR := Ops.LIDT.U
+    sysTrapR := false.B
     sysStep := 0.U
     sysWait := false.B
     lidtAddrR := ea
@@ -929,6 +947,9 @@ class X86Core extends Module {
   when(trapReq && !sysActive) {
     sysActive := true.B
     sysOp := 0.U
+    sysPcR := trapReqPc
+    sysOpR := 0.U
+    sysTrapR := true.B
     sysStep := 0.U
     sysWait := false.B
     trapVecR := trapReqVec
@@ -989,6 +1010,8 @@ class X86Core extends Module {
 
   private val trapFinal = sysActive && sysOp === 0.U && sysStep === 8.U
   private val iretFinal = sysActive && sysOp === 2.U && sysStep === 5.U
+  private val cpuidFinal = sysActive && sysOp === 3.U && sysStep === 3.U
+  private val sysValidDbg = trapFinal || iretFinal || (sysActive && sysFinalLidt) || cpuidFinal
   private val trapRspNext = trapRspR - Mux(trapHasErr, 48.U, 40.U)
 
   when(trapFinal) {
@@ -1004,14 +1027,14 @@ class X86Core extends Module {
   when(sysActive && sysFinalLidt) {
     sysActive := false.B
   }
-  when(sysActive && sysOp === 3.U && sysStep === 2.U) {
+  when(sysActive && sysOp === 3.U && sysStep === 3.U) {
     sysActive := false.B
   }
 
   private val syscallWr = idEx.valid && isSyscall
   private val syscallNext = idEx.uop.pc + idEx.uop.len
-  private val cpuid0 = sysActive && sysOp === 3.U && sysStep === 0.U
-  private val cpuid1 = sysActive && sysOp === 3.U && sysStep === 1.U
+  private val cpuid0 = sysActive && sysOp === 3.U && sysStep === 2.U
+  private val cpuid1 = sysActive && sysOp === 3.U && sysStep === 3.U
 
   gpr.io.we1    := (memWb.valid && (wrDst || writesRax)) || trapFinal || iretFinal ||
     syscallWr || cpuid0 || cpuid1
@@ -1182,6 +1205,12 @@ class X86Core extends Module {
   io.dbg.aluA := aluA
   io.dbg.aluB := aluB
   // Register the trap request so the testbench can sample it reliably after an edge.
+  io.dbg.sysValid := RegNext(sysValidDbg, false.B)
+  io.dbg.sysPc := sysPcR
+  io.dbg.sysOp := sysOpR
+  io.dbg.sysTrap := sysTrapR
+  io.dbg.sysVec := trapVecR
+  io.dbg.sysErr := trapErrR
   io.dbg.trapValid := RegNext(trapReq, false.B)
   io.dbg.trapVec := RegNext(trapReqVec, 0.U)
   io.dbg.trapErr := RegNext(trapReqErr, 0.U)
