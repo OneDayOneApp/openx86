@@ -14,7 +14,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, ".home", "pylibs"))
-from unicorn import Uc, UC_ARCH_X86, UC_MODE_64  # noqa: E402
+from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_HOOK_CODE  # noqa: E402
 from unicorn.x86_const import *  # noqa: E402
 
 LIB = os.path.join(ROOT, "build", "ref", "libxemu.so")
@@ -120,7 +120,12 @@ def uc_run(code, st, mem):
     for i in range(16):
         uc.reg_write(getattr(UC_X86_REG_XMM0, "value", 0) + 0 if False else getattr(__import__("unicorn.x86_const", fromlist=[f"UC_X86_REG_XMM{i}"]), f"UC_X86_REG_XMM{i}"),
                      (st.xmm[i][1] << 64) | st.xmm[i][0])
-    uc.emu_start(ENTRY, 0, 0, 1)
+    end = ENTRY + len(code)
+    def stop_at_end(uc_, addr, size, user):
+        if addr >= end:
+            uc_.emu_stop()
+    uc.hook_add(UC_HOOK_CODE, stop_at_end)
+    uc.emu_start(ENTRY, 0, 0, 0)
     out = DiffState()
     for i, reg in regmap.items():
         out.gpr[i] = uc.reg_read(reg)
@@ -136,11 +141,16 @@ def uc_run(code, st, mem):
 def mnemo(asm):
     return asm.split()[0]
 
+def base_mn(asm):
+    import re
+    m = mnemo(asm)
+    if m in {"rep", "repe", "repne"}:
+        m = asm.split()[1]
+    return re.sub(r"[bwlq]$", "", m)
+
 
 def flag_mask(asm):
-    m = asm.split()[0]
-    import re
-    base = re.sub(r"[bwlq]$", "", m)
+    base = base_mn(asm)
     mask = BASE_MASK
     if base in {"shl","shr","sar","rol","ror","rcl","rcr"}:
         mask &= ~((1<<FLAG_OF)|(1<<FLAG_AF))
@@ -169,7 +179,16 @@ def lane_eq(a, b, is32=False):
 
 def check(asm, code, rng):
     st = rand_state(rng)
-    mem = bytes(rng.getrandbits(8) for _ in range(0x100))
+    mem = bytes(rng.getrandbits(8) for _ in range(0x400))
+    b = base_mn(asm)
+    if b in {"movs", "stos", "lods", "scas", "cmps"}:
+        st.gpr[6] = DATA + 0x100
+        st.gpr[7] = DATA + 0x200
+        st.gpr[1] = rng.randrange(0, 5)
+        if rng.randrange(2):
+            st.rflags &= ~(1 << 10)   # DF=0
+        else:
+            st.rflags |= (1 << 10)
     lib = load_xemu()
     xout, xmem = xemu_exec(lib, code, st, mem)
     uout, umem = uc_run(code, st, mem)
@@ -233,6 +252,13 @@ TEMPLATES = [
     "comisd %xmm1, %xmm0", "ucomisd %xmm1, %xmm0",
     "cvtsi2sd {r1}, %xmm0", "cvttsd2si %xmm1, {r2}", "cvtsd2ss %xmm1, %xmm0",
     "cvtss2sd %xmm1, %xmm0",
+    "movsb", "movsw", "movsl", "movsq",
+    "stosb", "stosw", "stosl", "stosq",
+    "lodsb", "lodsw", "lodsl", "lodsq",
+    "cmpsb", "cmpsw", "cmpsl", "cmpsq",
+    "scasb", "scasw", "scasl", "scasq",
+    "rep movsb", "rep movsq", "rep stosb", "rep stosq",
+    "rep lodsb", "rep lodsq", "repe cmpsb", "repne scasb",
     "sete %cl", "setne %cl", "setl %cl", "setg %cl",
     "cmove {r1}, {r2}", "cmovne {r1}, {r2}",
 ]

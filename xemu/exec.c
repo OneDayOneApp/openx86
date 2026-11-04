@@ -224,6 +224,49 @@ static uint64_t pop_val(int sz) {
   return v;
 }
 
+static int str_dir(void) { return getf(F_DF) ? -1 : 1; }
+
+static int do_string(const XemuInst *d) {
+  int sz = d->opsz;
+  int dir = str_dir();
+  int rep = d->rep;
+  uint64_t count = rep ? xemu.gpr[1] : 1;
+  while (count) {
+    uint64_t src = xemu.gpr[6], dst = xemu.gpr[7];
+    uint64_t a = 0, b = 0;
+    if (d->op == Ops_MOVS) {
+      if (xemu_vread(src, &a, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      if (xemu_vwrite(dst, &a, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      xemu.gpr[6] += dir * sz; xemu.gpr[7] += dir * sz;
+    } else if (d->op == Ops_STOS) {
+      a = read_reg(0, sz);
+      if (xemu_vwrite(dst, &a, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      xemu.gpr[7] += dir * sz;
+    } else if (d->op == Ops_LODS) {
+      if (xemu_vread(src, &a, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      write_reg(0, a, sz); xemu.gpr[6] += dir * sz;
+    } else if (d->op == Ops_SCAS) {
+      if (xemu_vread(dst, &b, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      a = read_reg(0, sz);
+      uint64_t r = a - b; sub_flags(a, b, r, sz, 0); set_szp(r, sz);
+      xemu.gpr[7] += dir * sz;
+    } else if (d->op == Ops_CMPS) {
+      if (xemu_vread(src, &a, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      if (xemu_vread(dst, &b, sz) != 0) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0; }
+      uint64_t r = a - b; sub_flags(a, b, r, sz, 0); set_szp(r, sz);
+      xemu.gpr[6] += dir * sz; xemu.gpr[7] += dir * sz;
+    }
+    if (!rep) break;
+    count--;
+    xemu.gpr[1] = count;
+    if ((d->op == Ops_CMPS || d->op == Ops_SCAS)) {
+      if (rep == 1 && !getf(F_ZF)) break;
+      if (rep == 2 && getf(F_ZF)) break;
+    }
+  }
+  return 0;
+}
+
 int xemu_sse_exec(const XemuInst *d);
 
 int xemu_exec(const XemuInst *d) {
@@ -232,6 +275,9 @@ int xemu_exec(const XemuInst *d) {
   if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
   if (op >= Ops_MOVD && op <= Ops_CVTTPD2DQ) return xemu_sse_exec(d);
   switch (op) {
+    case Ops_MOVS: case Ops_STOS: case Ops_LODS: case Ops_SCAS: case Ops_CMPS:
+      do_string(d);
+      break;
     case Ops_MOV:
       if (d->a_kind == XK_XMM || d->b_kind == XK_XMM) return -1;
       write_op(d, 1, read_op(d, 0, d->memsz ? d->memsz : sz), sz);
