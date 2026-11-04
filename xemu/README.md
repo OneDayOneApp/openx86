@@ -77,6 +77,19 @@ make sys-diff-test
 # 10 x PASS
 ```
 
+## NEMU 风格独立运行（xemu CLI）
+
+```bash
+make xemu-bin
+./build/xemu -i build/tests/t1_basic.bin -b        # batch
+./build/xemu -i build/tests/t1_basic.bin           # interactive monitor
+./build/xemu -i image.bin --trace --max-steps=1000 # itrace + 限制
+```
+
+Monitor 命令：`si [N]`、`info r`、`x N ADDR`、`q`。
+批处理结束时输出 `halted after N instructions, rip=..., exit=...`；
+执行失败时打印 NEMU 风格最后 16 条指令 ring buffer。
+
 ## M5 状态（已完成）
 
 - `build/emu` 默认参考模型切换为 `build/ref/libxemu.so`（Unicorn 用 `make ref-unicorn` 可选）

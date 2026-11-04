@@ -20,7 +20,11 @@ int xemu_mem_write(uint64_t addr, const void *buf, size_t n) {
     return 0;
   }
   if (addr >= XEMU_MMIO_HALT && addr + n <= XEMU_MMIO_HALT + XEMU_MMIO_SIZE) {
-    /* Halt MMIO: any write stops the reference model. */
+    /* Halt MMIO: any write stops the reference model; the low byte is the exit code. */
+    uint64_t v = 0;
+    const uint8_t *b = (const uint8_t *)buf;
+    for (size_t i = 0; i < n && i < 8; i++) v |= (uint64_t)b[i] << (8 * i);
+    xemu_exit_code = v;
     xemu.halted = 1;
     return 0;
   }
@@ -61,6 +65,7 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
 }
 
 uint64_t xemu_fault_err = 0;
+uint64_t xemu_exit_code = 0;
 int xemu_fault_pending = 0;
 
 static int vaccess(uint64_t va, void *buf, size_t n, int write, int fetch) {
