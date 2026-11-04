@@ -135,6 +135,20 @@ static void comis_flags(double a, double b) {
   else if (a == b) xemu.rflags |= 1ull << 6;
 }
 
+static uint64_t get_lane(Vec128 v, int idx, int bytes) {
+  uint64_t m = bytes == 8 ? ~0ull : ((1ull << (bytes * 8)) - 1);
+  int bit = idx * bytes * 8;
+  uint64_t w = bit >= 64 ? v.u[1] : v.u[0];
+  return (w >> (bit & 63)) & m;
+}
+static void set_lane(Vec128 *v, int idx, int bytes, uint64_t x) {
+  uint64_t m = bytes == 8 ? ~0ull : ((1ull << (bytes * 8)) - 1);
+  int bit = idx * bytes * 8;
+  uint64_t *w = bit >= 64 ? &v->u[1] : &v->u[0];
+  int sh = bit & 63;
+  *w = (*w & ~(m << sh)) | ((x & m) << sh);
+}
+
 int xemu_sse_exec(const XemuInst *d) {
   uint16_t op = d->op;
   int simd = d->simd;
@@ -201,6 +215,85 @@ int xemu_sse_exec(const XemuInst *d) {
       put_vec(d->a_idx, r);
       break;
     }
+    case Ops_PADDB: case Ops_PADDW: case Ops_PADDQ:
+    case Ops_PSUBB: case Ops_PSUBW: case Ops_PSUBQ: {
+      int bytes = (op == Ops_PADDB || op == Ops_PSUBB) ? 1 :
+                  (op == Ops_PADDW || op == Ops_PSUBW) ? 2 :
+                  (op == Ops_PADDQ || op == Ops_PSUBQ) ? 8 : 4;
+      Vec128 r = zero_vec();
+      for (int i = 0; i < 16 / bytes; i++) {
+        uint64_t m = bytes == 8 ? ~0ull : ((1ull << (bytes * 8)) - 1);
+        uint64_t av = get_lane(dst, i, bytes);
+        uint64_t bv = get_lane(src, i, bytes);
+        uint64_t rv = (op == Ops_PADDB || op == Ops_PADDW || op == Ops_PADDQ)
+                        ? (av + bv) & m : (av - bv) & m;
+        set_lane(&r, i, bytes, rv);
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
+    case Ops_PCMPEQB: case Ops_PCMPEQW: case Ops_PCMPEQD:
+    case Ops_PCMPGTB: case Ops_PCMPGTW: case Ops_PCMPGTD: {
+      int bytes = (op == Ops_PCMPEQB || op == Ops_PCMPGTB) ? 1 :
+                  (op == Ops_PCMPEQW || op == Ops_PCMPGTW) ? 2 : 4;
+      Vec128 r = zero_vec();
+      for (int i = 0; i < 16 / bytes; i++) {
+        uint64_t m = (1ull << (bytes * 8)) - 1;
+        uint64_t av = get_lane(dst, i, bytes);
+        uint64_t bv = get_lane(src, i, bytes);
+        int eq = (av == bv);
+        int gt = 0;
+        if (bytes == 1) gt = (int8_t)av > (int8_t)bv;
+        else if (bytes == 2) gt = (int16_t)av > (int16_t)bv;
+        else gt = (int32_t)av > (int32_t)bv;
+        int take = (op == Ops_PCMPEQB || op == Ops_PCMPEQW || op == Ops_PCMPEQD) ? eq : gt;
+        set_lane(&r, i, bytes, take ? m : 0);
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
+    case Ops_PSHUFD: {
+      Vec128 r;
+      uint8_t imm = (uint8_t)d->imm;
+      r.w[0] = src.w[(imm >> 0) & 3];
+      r.w[1] = src.w[(imm >> 2) & 3];
+      r.w[2] = src.w[(imm >> 4) & 3];
+      r.w[3] = src.w[(imm >> 6) & 3];
+      put_vec(d->a_idx, r);
+      break;
+    }
+    case Ops_PUNPCKLBW: case Ops_PUNPCKLWD: case Ops_PUNPCKLDQ: case Ops_PUNPCKLQDQ:
+    case Ops_PUNPCKHBW: case Ops_PUNPCKHWD: case Ops_PUNPCKHDQ: case Ops_PUNPCKHQDQ: {
+      int bytes = (op == Ops_PUNPCKLBW || op == Ops_PUNPCKHBW) ? 1 :
+                  (op == Ops_PUNPCKLWD || op == Ops_PUNPCKHWD) ? 2 :
+                  (op == Ops_PUNPCKLDQ || op == Ops_PUNPCKHDQ) ? 4 : 8;
+      int high = (op == Ops_PUNPCKHBW || op == Ops_PUNPCKHWD ||
+                  op == Ops_PUNPCKHDQ || op == Ops_PUNPCKHQDQ);
+      int lanes = 16 / bytes;
+      Vec128 r = zero_vec();
+      for (int i = 0; i < lanes / 2; i++) {
+        uint64_t m = bytes == 8 ? ~0ull : ((1ull << (bytes * 8)) - 1);
+        int ai = (high ? lanes / 2 : 0) + i;
+        int bi = (high ? lanes / 2 : 0) + i;
+        uint64_t av = get_lane(dst, ai, bytes);
+        uint64_t bv = get_lane(src, bi, bytes);
+        int oi = i * 2;
+        set_lane(&r, oi, bytes, av);
+        set_lane(&r, oi + 1, bytes, bv);
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
+    case Ops_PMOVMSKB: {
+      uint32_t mask = 0;
+      for (int i = 0; i < 16; i++)
+        mask |= (uint32_t)((get_lane(src, i, 1) >> 7) & 1) << i;
+      xemu.gpr[d->a_idx] = mask;
+      break;
+    }
+    case Ops_MOVNTDQ:
+      st_vec(addr, 16, src);
+      break;
     case Ops_SIMD_PADDD: case Ops_SIMD_PSUBD: {
       Vec128 r = zero_vec();
       for (int i = 0; i < 4; i++)

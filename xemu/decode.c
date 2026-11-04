@@ -184,6 +184,29 @@ static void init_tables(void) {
   set(twobyte, 0xb0, DI(Ops_CMPXCHG, .modrm = 1, .dir = 0, .force8 = 1));
   set(twobyte, 0xb1, DI(Ops_CMPXCHG, .modrm = 1, .dir = 0));
   set(twobyte, 0xc7, DI(Ops_UNDEF, .modrm = 1));
+  set(twobyte, 0xfc, DI(Ops_PADDB, .modrm = 1, .dir = 1));
+  set(twobyte, 0xfd, DI(Ops_PADDW, .modrm = 1, .dir = 1));
+  set(twobyte, 0xd4, DI(Ops_PADDQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0xf8, DI(Ops_PSUBB, .modrm = 1, .dir = 1));
+  set(twobyte, 0xf9, DI(Ops_PSUBW, .modrm = 1, .dir = 1));
+  set(twobyte, 0xfb, DI(Ops_PSUBQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0x74, DI(Ops_PCMPEQB, .modrm = 1, .dir = 1));
+  set(twobyte, 0x75, DI(Ops_PCMPEQW, .modrm = 1, .dir = 1));
+  set(twobyte, 0x76, DI(Ops_PCMPEQD, .modrm = 1, .dir = 1));
+  set(twobyte, 0x64, DI(Ops_PCMPGTB, .modrm = 1, .dir = 1));
+  set(twobyte, 0x65, DI(Ops_PCMPGTW, .modrm = 1, .dir = 1));
+  set(twobyte, 0x66, DI(Ops_PCMPGTD, .modrm = 1, .dir = 1));
+  set(twobyte, 0x70, DI(Ops_PSHUFD, .modrm = 1, .dir = 1, .imm = IMM_8));
+  set(twobyte, 0x60, DI(Ops_PUNPCKLBW, .modrm = 1, .dir = 1));
+  set(twobyte, 0x61, DI(Ops_PUNPCKLWD, .modrm = 1, .dir = 1));
+  set(twobyte, 0x62, DI(Ops_PUNPCKLDQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0x6c, DI(Ops_PUNPCKLQDQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0x68, DI(Ops_PUNPCKHBW, .modrm = 1, .dir = 1));
+  set(twobyte, 0x69, DI(Ops_PUNPCKHWD, .modrm = 1, .dir = 1));
+  set(twobyte, 0x6a, DI(Ops_PUNPCKHDQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0x6d, DI(Ops_PUNPCKHQDQ, .modrm = 1, .dir = 1));
+  set(twobyte, 0xd7, DI(Ops_PMOVMSKB, .modrm = 1, .dir = 1));
+  set(twobyte, 0xe7, DI(Ops_MOVNTDQ, .modrm = 1, .dir = 0, .store = 1));
   set(twobyte, 0xdb, DI(Ops_SIMD_PAND, .modrm = 1, .dir = 1));
   set(twobyte, 0xeb, DI(Ops_SIMD_POR, .modrm = 1, .dir = 1));
   set(twobyte, 0xef, DI(Ops_SIMD_PXOR, .modrm = 1, .dir = 1));
@@ -315,6 +338,11 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     op = Ops_CMPXCHG8B;
     dir = 0;
   }
+  if (is0F && opcode == 0x70) {
+    if (p66) op = Ops_PSHUFD;
+    else if (rep == 1) op = Ops_PSHUFHW;
+    else if (rep == 2) op = Ops_PSHUFLW;
+  }
 
   int rexW = (rex >> 3) & 1, rexR = (rex >> 2) & 1, rexX = (rex >> 1) & 1, rexB = rex & 1;
   int has_sib = has_modrm && !rm_is_reg && rm == 4;
@@ -392,7 +420,8 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
 
   int is_xmm = (op == Ops_MOVD || op == Ops_MOVQ || op == Ops_MOVDQ || op == Ops_MOVPS ||
                 (op >= Ops_SIMD_ADD && op <= Ops_CVTTPD2DQ) || op == Ops_SIMD_PAND ||
-                op == Ops_SIMD_POR || op == Ops_SIMD_PXOR || op == Ops_SIMD_PADDD || op == Ops_SIMD_PSUBD);
+                op == Ops_SIMD_POR || op == Ops_SIMD_PXOR || op == Ops_SIMD_PADDD || op == Ops_SIMD_PSUBD ||
+                (op >= Ops_PADDB && op <= Ops_MOVNTDQ) || op == Ops_PSHUFHW || op == Ops_PSHUFLW);
   int simd = SIMD_NONE;
   int mand = rep == 1 ? 2 : (rep == 2 ? 3 : (p66 ? 1 : 0));
   static const int simd_arith[4] = { SIMD_PS, SIMD_PD, SIMD_SS, SIMD_SD };
@@ -427,6 +456,14 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     case Ops_SIMD_UCOMI: case Ops_SIMD_COMI: memsz = simd == SIMD_SS ? 4 : (simd == SIMD_SD ? 8 : 16); break;
     case Ops_SIMD_PAND: case Ops_SIMD_POR: case Ops_SIMD_PXOR:
     case Ops_SIMD_PADDD: case Ops_SIMD_PSUBD: memsz = 16; break;
+    case Ops_PADDB: case Ops_PADDW: case Ops_PADDQ:
+    case Ops_PSUBB: case Ops_PSUBW: case Ops_PSUBQ:
+    case Ops_PCMPEQB: case Ops_PCMPEQW: case Ops_PCMPEQD:
+    case Ops_PCMPGTB: case Ops_PCMPGTW: case Ops_PCMPGTD:
+    case Ops_PSHUFD: case Ops_PSHUFHW: case Ops_PSHUFLW:
+    case Ops_PUNPCKLBW: case Ops_PUNPCKLWD: case Ops_PUNPCKLDQ: case Ops_PUNPCKLQDQ:
+    case Ops_PUNPCKHBW: case Ops_PUNPCKHWD: case Ops_PUNPCKHDQ: case Ops_PUNPCKHQDQ:
+    case Ops_MOVNTDQ: memsz = 16; break;
     case Ops_CVTSI2SD: case Ops_CVTSI2SS: memsz = opsz; break;
     case Ops_CVTTSS2SI: memsz = 4; break;
     case Ops_CVTSD2SI: memsz = 8; break;
@@ -517,7 +554,8 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_MOVS || op == Ops_STOS || op == Ops_LODS || op == Ops_SCAS || op == Ops_CMPS) {
     out->a_kind = XK_NONE; out->b_kind = XK_NONE;
   }
-  if (is_xmm && dir == 1 && op != Ops_CVTTSD2SI && op != Ops_CVTTSS2SI && op != Ops_CVTSD2SI) {
+  if (is_xmm && dir == 1 && op != Ops_CVTTSD2SI && op != Ops_CVTTSS2SI &&
+      op != Ops_CVTSD2SI && op != Ops_PMOVMSKB) {
     out->a_kind = XK_XMM; out->a_idx = reg | (rexR << 3);
     out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
     if (op == Ops_CVTSI2SD || op == Ops_CVTSI2SS)
@@ -530,6 +568,10 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_MOVD && dir == 0) out->a_kind = rm_is_reg ? XK_GPR : XK_MEM;
   if (op == Ops_MOVD && dir == 1) out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
   if (op == Ops_CVTTSD2SI || op == Ops_CVTTSS2SI || op == Ops_CVTSD2SI) {
+    out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
+    out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
+  }
+  if (op == Ops_PMOVMSKB) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
     out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
   }

@@ -81,10 +81,10 @@ make sys-diff-test
 
 ```bash
 make isa-diff
-# isa diff: 11600/11600 passed, 0 failed
+# isa diff: 13900/13900 passed, 0 failed
 ```
 
-`tools/isa_diff.py` 对每条指令（含字符串/REP、BSF/BSR、BT 系列、CMPXCHG/8B/16B）：
+`tools/isa_diff.py` 对每条指令（含字符串/REP、BSF/BSR、BT 系列、CMPXCHG/8B/16B、SSE2 整数、间接 CALL/JMP）：
 - 相同 GPR/XMM/RFLAGS/内存初始状态
 - Unicorn 与 XEMU 各执行一条
 - 比较 RIP/GPR/XMM/flags（未定义位掩码）/内存
