@@ -105,5 +105,21 @@ emu-test: core-sim ref-so
 emu-fuzz: emu
 	python3 tools/emu_fuzz.py 200 1
 
+# ---------------------------------------------------------------- XEMU (self-written reference model)
+XEMU_SO := build/ref/libxemu.so
+XEMU_SRC := $(wildcard xemu/*.c)
+
+.PHONY: xemu-so
+xemu-so: $(XEMU_SO)
+
+$(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
+	@mkdir -p build/ref
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared \
+	  -Wall -Wextra -o $@ $(XEMU_SRC)
+
+xemu-test: emu xemu-so
+	python3 tools/difftest.py tests/emu/xemu_m0.S
+	./build/emu -i build/tests/xemu_m0.bin --ref-so=$(XEMU_SO)
+
 clean:
 	rm -rf build target project/target project/project
