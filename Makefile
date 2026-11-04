@@ -67,6 +67,9 @@ ooo-sim: ooo-rtl
 ooo-test: ooo-sim core-sim
 	python3 tools/ooo_regress.py
 
+sys-lockstep-test: core-sim xemu-so
+	python3 tools/sys_lockstep.py
+
 sys-diff-test: core-sim xemu-so
 	python3 tools/sysrun.py tests/system/t22_cr.S --diff
 	python3 tools/sysrun.py tests/system/t23_paging.S --diff

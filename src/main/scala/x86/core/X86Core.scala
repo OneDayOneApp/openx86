@@ -923,10 +923,10 @@ class X86Core extends Module {
     trapReqVec := 6.U
     trapReqPc := exMem.uop.pc
   }
-  when(exMem.valid && (exMem.uop.op === Ops.UD2.U) && !haltedReg) {
+  when(idEx.valid && (idEx.uop.op === Ops.UD2.U) && !haltedReg) {
     trapReq := true.B
     trapReqVec := 6.U
-    trapReqPc := exMem.uop.pc
+    trapReqPc := idEx.uop.pc
   }
   when(exMem.valid && (exMem.uop.op === Ops.INT3.U) && !haltedReg) {
     trapReq := true.B
@@ -1056,6 +1056,15 @@ class X86Core extends Module {
     fatalReg  := true.B
     fatalPcReg := wbOp.pc
     fatalCdReg := ExceptionCause.Ud.U
+  }
+
+  // Freeze the pipeline while the trap/LIDT/IRET/CPUID microcode is active so
+  // younger instructions fetched past a faulting instruction cannot retire.
+  when(sysActive) {
+    idEx.valid := false.B
+    exMem.valid := false.B
+    memWb.valid := false.B
+    ibufValid := false.B
   }
 
   io.commit.valid := memWb.valid

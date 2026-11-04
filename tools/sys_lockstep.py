@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Per-instruction lockstep difftest for system tests against XEMU."""
+
+import glob
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TB = os.path.join(ROOT, "build", "obj_core", "core_tb")
+REF = os.path.join(ROOT, "build", "ref", "libxemu.so")
+BUILD = os.path.join(ROOT, "build", "sys")
+
+
+def assemble(src, name):
+    os.makedirs(BUILD, exist_ok=True)
+    obj = os.path.join(BUILD, name + ".o")
+    binp = os.path.join(BUILD, name + ".bin")
+    subprocess.run(["clang", "-target", "x86_64-unknown-none-elf", "-c", src, "-o", obj], check=True)
+    subprocess.run(["llvm-objcopy", "-O", "binary", obj, binp], check=True)
+    return binp
+
+
+def main():
+    tests = sorted(glob.glob(os.path.join(ROOT, "tests", "system", "*.S")))
+    passed, failed = 0, []
+    for src in tests:
+        name = os.path.splitext(os.path.basename(src))[0]
+        binp = assemble(src, name)
+        r = subprocess.run([TB, binp, "2000000", "--diff", f"--ref-so={REF}"],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode == 0 and "instructions cross-checked" in r.stderr:
+            passed += 1
+            n = [l for l in r.stderr.splitlines() if "instructions cross-checked" in l][-1]
+            print(f"PASS {name}: {n.split()[1]} instructions")
+        else:
+            failed.append(name)
+            print(f"FAIL {name}")
+            print("\n".join(r.stderr.strip().splitlines()[-3:]))
+    print(f"\nsys lockstep: {passed} passed, {len(failed)} failed")
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
