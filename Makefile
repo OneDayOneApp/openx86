@@ -115,7 +115,7 @@ xemu-so: $(XEMU_SO)
 $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
 	@mkdir -p build/ref
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared \
-	  -Wall -Wextra -o $@ $(XEMU_SRC)
+	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
 xemu-test: emu xemu-so
 	python3 tools/difftest.py tests/emu/xemu_m0.S

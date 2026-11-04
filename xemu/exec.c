@@ -214,9 +214,12 @@ static uint64_t pop_val(int sz) {
   return v;
 }
 
+int xemu_sse_exec(const XemuInst *d);
+
 int xemu_exec(const XemuInst *d) {
   int sz = d->opsz;
   uint16_t op = d->op;
+  if (op >= Ops_MOVD && op <= Ops_CVTTPD2DQ) return xemu_sse_exec(d);
   switch (op) {
     case Ops_MOV:
       if (d->a_kind == XK_XMM || d->b_kind == XK_XMM) return -1;
