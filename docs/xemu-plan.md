@@ -97,12 +97,12 @@ typedef struct {
 - 最小指令：`MOV r64, imm64`、`HLT`
 - 验收：`tests/emu/xemu_m0.S` 逐指令对拍通过（`make xemu-test`）
 
-### M1 解码器（3–5 天）
+### M1 解码器（已完成）
 
 - 前缀、REX、ModRM/SIB、disp/imm、RIP 相对
 - 表驱动 primary/two-byte 解码，覆盖当前 Ops 子集
-- 单元测试：复用 693 条解码向量，比较长度/op/操作数
-- 验收：693/693
+- 单元测试：复用 693 条解码向量；长度/合法性 + 字段级（op/simd/opsz/memsz/操作数/imm/base/index/disp）对拍
+- 验收：693/693（长度与字段均通过，`make xemu-decode-test`）
 
 ### M2 整数执行（1–2 周）
 

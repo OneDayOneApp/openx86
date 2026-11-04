@@ -18,6 +18,21 @@ python3 tools/difftest.py tests/emu/xemu_m0.S
 
 输出 `1 instructions cross-checked`，说明 DUT 与 XEMU 逐指令一致。
 
+## M1 状态（已完成）
+
+- 表驱动解码：前缀/REX/0F 映射/组表/ModRM/SIB/disp/imm/RIP 相对
+- 字段级对齐 RTL：`len/op/simd/opsz/memsz/a/b/imm/base/index/disp/illegal`
+- 已通过：
+
+```bash
+make xemu-decode-test
+# xemu decode: 693/693 passed, 0 failed
+# xemu decode fields: 693/693 passed, 0 failed
+```
+
+`xemu/decode_test.c` 对齐 693 条向量的长度/合法性；
+`xemu/decode_field_test.c` 用 RTL `DUMP=1` 的输出做字段级对拍。
+
 ## 目录
 
 | 文件 | 内容 |

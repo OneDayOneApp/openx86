@@ -107,7 +107,7 @@ emu-fuzz: emu
 
 # ---------------------------------------------------------------- XEMU (self-written reference model)
 XEMU_SO := build/ref/libxemu.so
-XEMU_SRC := $(wildcard xemu/*.c)
+XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c,$(wildcard xemu/*.c))
 
 .PHONY: xemu-so
 xemu-so: $(XEMU_SO)
@@ -120,6 +120,23 @@ $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
 xemu-test: emu xemu-so
 	python3 tools/difftest.py tests/emu/xemu_m0.S
 	./build/emu -i build/tests/xemu_m0.bin --ref-so=$(XEMU_SO)
+
+XEMU_DECODE_TEST := build/xemu_decode_test
+XEMU_FIELD_TEST := build/xemu_decode_field_test
+
+$(XEMU_DECODE_TEST): xemu/decode.c xemu/decode_test.c xemu/mem.c xemu/state.c
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
+	  xemu/decode.c xemu/mem.c xemu/state.c xemu/decode_test.c -o $@
+
+$(XEMU_FIELD_TEST): xemu/decode.c xemu/decode_field_test.c xemu/mem.c xemu/state.c
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
+	  xemu/decode.c xemu/mem.c xemu/state.c xemu/decode_field_test.c -o $@
+
+.PHONY: xemu-decode-test
+xemu-decode-test: decode-sim decode-vectors $(XEMU_DECODE_TEST) $(XEMU_FIELD_TEST)
+	DUMP=1 $(DEC_OBJ)/decoder_tb $(DEC_DIR)/vectors.txt $(DEC_DIR)/image.bin > $(DEC_DIR)/dump.txt
+	$(XEMU_DECODE_TEST) $(DEC_DIR)/vectors.txt $(DEC_DIR)/image.bin
+	$(XEMU_FIELD_TEST) $(DEC_DIR)/dump.txt $(DEC_DIR)/image.bin
 
 clean:
 	rm -rf build target project/target project/project
