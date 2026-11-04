@@ -81,7 +81,7 @@ make sys-diff-test
 
 ```bash
 make isa-diff
-# isa diff: 13900/13900 passed, 0 failed
+# isa diff: 14300/14300 passed, 0 failed
 ```
 
 `tools/isa_diff.py` 对每条指令（含字符串/REP、BSF/BSR、BT 系列、CMPXCHG/8B/16B、SSE2 整数、间接 CALL/JMP）：
