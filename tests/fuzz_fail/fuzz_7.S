@@ -1,0 +1,55 @@
+    movq $0x800000, %rsp
+    movq $0x600000, %rbx
+    movabsq $2782676153706958308, %rax
+    movabsq $1336213610742710224, %rcx
+    movabsq $6745769884264228881, %rdx
+    movabsq $1069891289537943645, %rsi
+    movabsq $691672907343361484, %rdi
+    movabsq $7999350999753991002, %r8
+    movabsq $1288605153985647771, %r9
+    movabsq $1673359773981742884, %r10
+movq 24(%rbx), %r15
+xorq $75, %rax
+movb $157, %bl
+xorq %r8, %rdx
+movq %rsi, 40(%rbx)
+orq %rdi, %rcx
+movl %r11d, 8(%rbx)
+testq %rbx, %r9
+sets %r8b
+movzbq %r8b, %r8
+notq %r11
+movq 40(%rbx), %rbx
+por %xmm7, %xmm2
+movl 112(%rbx), %r13d
+xorq $-68, %rcx
+movq 80(%rbx), %r14
+imulq %r8, %rax
+movdqa %xmm2, %xmm10
+notq %r11
+movq %rcx, 64(%rbx)
+movl %ecx, 8(%rbx)
+movdqa %xmm9, %xmm14
+movb $11, %cl
+sarq %cl, %rax
+subq %r9, %rax
+xorq %rdx, %r13
+orq $126, %r8
+movl $2363175007, %edx
+movdqa %xmm13, 96(%rbx)
+subq $-38, %rcx
+orq %r12, %rbx
+movabsq $4846819625942255055, %r9
+addq $86, %rdx
+movq 80(%rbx), %r11
+addq %r9, %r15
+movdqa %xmm12, %xmm12
+imulq %r12, %r8
+movb $-22, %bl
+movq %rdi, 8(%rbx)
+addq %r11, %rdx
+movq %rdi, 0(%rbx)
+movb $186, %r15b
+shrq $3, %r12
+    movabsq $0xf0000000, %r15
+    movq $0, (%r15)
