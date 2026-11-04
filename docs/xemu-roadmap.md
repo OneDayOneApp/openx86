@@ -87,7 +87,7 @@ Unicorn 不覆盖：分页、IDT、异常投递、CPL、设备、外部中断。
 - 验收：现有 op 100% 覆盖、≥5000 向量、0 mismatch；CI 脚本
 - 当前：`make isa-diff` → **7100/7100**（71 模板 × 100 随机状态）
 
-### P2 — ISA 扩展（3–4 周）
+### P2 — ISA 扩展（进行中）
 
 按 Unicorn 对拍驱动实现：
 
@@ -97,6 +97,7 @@ Unicorn 不覆盖：分页、IDT、异常投递、CPL、设备、外部中断。
 - 原子：CMPXCHG、CMPXCHG8B/16B
 - SSE2 扩展：PADD/PSUB 全宽度、PCMPEQ/PCMPGT、PSHUF、PUNPCK、
   PMOVMSKB、MASKMOVDQU、MOVNT、更多 CVT
+- 进度：字符串 MOVS/STOS/LODS/SCAS/CMPS + REP 已完成，Unicorn 向量 9900/9900
 - 验收：每类指令 Unicorn 向量全过；fuzz 覆盖新 op
 
 ### P3 — 系统模式与中断（3–4 周）

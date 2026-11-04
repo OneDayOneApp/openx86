@@ -42,6 +42,7 @@ typedef struct {
   uint8_t a_idx, b_idx;
   uint64_t imm;
   uint8_t imm_kind;
+  uint8_t rep; /* 0 none, 1 F3, 2 F2 */
   int64_t disp;
   uint8_t base, index, scale;
   int rip_rel;

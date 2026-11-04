@@ -300,13 +300,32 @@ int xemu_sse_exec(const XemuInst *d) {
     }
     case Ops_CVTSS2SD: {
       Vec128 r = dst;
-      r.d[0] = canon_f64((double)src.f[0]);
+      uint32_t b = src.w[0];
+      if ((b & 0x7f800000u) == 0x7f800000u && (b & 0x7fffffu)) {
+        uint64_t sign = (uint64_t)(b >> 31) << 63;
+        uint64_t mant = (uint64_t)(b & 0x7fffffu) << 29;
+        uint64_t dbl = sign | (0x7ffull << 52) | mant;
+        dbl |= (1ull << 51); /* result is always quieted */
+        r.u[0] = dbl;
+      } else {
+        r.d[0] = canon_f64((double)src.f[0]);
+      }
       put_vec(d->a_idx, r);
       break;
     }
     case Ops_CVTSD2SS: {
       Vec128 r = dst;
-      r.f[0] = canon_f32((float)src.d[0]);
+      uint64_t b = src.u[0];
+      if ((b & 0x7ff0000000000000ull) == 0x7ff0000000000000ull &&
+          (b & 0xfffffffffffffull)) {
+        uint32_t sign = (uint32_t)(b >> 63) << 31;
+        uint32_t mant = (uint32_t)((b >> 29) & 0x7fffffu);
+        uint32_t flt = sign | (0xffu << 23) | mant;
+        flt |= (1u << 22); /* result is always quieted */
+        r.w[0] = flt;
+      } else {
+        r.f[0] = canon_f32((float)src.d[0]);
+      }
       put_vec(d->a_idx, r);
       break;
     }

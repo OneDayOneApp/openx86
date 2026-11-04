@@ -345,6 +345,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   out->opsz = opsz;
   out->imm = imm;
   out->imm_kind = (uint8_t)eff_imm;
+  out->rep = (uint8_t)rep;
   out->disp = disp;
   out->illegal = 0;
   out->a_kind = XK_NONE; out->a_idx = 0;
