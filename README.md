@@ -1,4 +1,4 @@
-# X86-KMH
+# OpenX86
 
 **用 Chisel 实现的 x86-64 处理器（含 SSE2 子集），参考香山昆明湖微架构，配套香山/NEMU 风格逐指令 DiffTest 与 `emu`。**
 

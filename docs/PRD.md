@@ -1,8 +1,8 @@
-# X86-KMH 处理器产品需求文档（PRD）
+# OpenX86 处理器产品需求文档（PRD）
 
 | 项目 | 内容 |
 | --- | --- |
-| 产品代号 | X86-KMH（X86 core, KunMingHu-inspired） |
+| 产品代号 | OpenX86（X86 core, KunMingHu-inspired） |
 | 文档版本 | v0.1（初稿，待评审） |
 | 文档日期 | 2026-11-03 |
 | 文档状态 | Draft |
@@ -353,7 +353,7 @@ x86-64 是服务器、PC、工控与教学领域事实上的主流指令集，�
 
 | 叶子 | 内容 |
 | --- | --- |
-| 0x00000000 | MaxBasicLeaf=0x00000001；Vendor ID = `X86-KMH-Core`（12 字节，自定义） |
+| 0x00000000 | MaxBasicLeaf=0x00000001；Vendor ID = `OpenX86-Core`（12 字节，自定义） |
 | 0x00000001 | Family/Model/Stepping；EDX：TSC、MSR、PAE、CX8、SEP、CMOV、SSE、SSE2、FXSR、CLFSH（FPU/MMX 置 0；LM 见扩展叶子） |
 | 0x80000000 | MaxExtLeaf=0x80000008 |
 | 0x80000001 | EDX：SYSCALL、NX、LM、RDTSCP；ECX：LAHF_LM |
