@@ -44,15 +44,25 @@ make xemu-decode-test
 | `exec.c` | M0 最小执行 |
 | `difftest.c` | NEMU 风格 ABI 导出 |
 
-## M2 状态（整数执行已完成，SSE 待 M4）
+## M2 / M4 状态（整数 + SSE2 子集已完成）
 
 - 已实现：MOV/MOVZX/MOVSX/MOVSXD/LEA、ALU、移位/旋转、INC/DEC/NEG/NOT、
   MUL/IMUL/DIV/IDIV、CDQ/CQO/CBW、XCHG/XADD、CMP/TEST/SETcc/CMOVcc、
   JMP/JCC/LOOP/LOOPNE/LOOPE/JRCXZ、CALL/RET、PUSH/POP/PUSHF/POPF、LAHF/SAHF、
   STI/CLI/STD/CLD/CLC/STC/CMC、HLT
 - 部分写、flags（含未定义位保持旧值）、内存寻址、RIP 相对、栈
-- `make xemu-regress`：**27/37** 通过；剩余 10 个均为 SSE/COMIS 用例（M4）
+- `make xemu-regress`：**37/37** 通过（整数 + SSE2 子集）
+- 随机 fuzz（XEMU 参考）：`XEMU_REF=build/ref/libxemu.so python3 tools/emu_fuzz.py 200 1` → 200/200
+
+## M4 SSE2 子集
+
+- 传送：MOVD/MOVQ/MOVDQ/MOVPS（含 MOVSS/MOVSD 高位语义）
+- 整数 SIMD：PADDD/PSUBD/PAND/POR/PXOR
+- 浮点：ADD/SUB/MUL/DIV/SQRT/MIN/MAX（SS/SD/PS/PD）、COMIS/UCOMIS
+- 转换：CVTSI2SS/SD、CVTTSS2SI/CVTTSD2SI/CVTSD2SI、CVTSS2SD/CVTSD2SD、
+  CVTDQ2PS/CVTPS2DQ/CVTDQ2PD/CVTPD2DQ/CVTTPD2DQ
+- `t13`–`t21` 全部通过
 
 ## 下一步
 
-实现完整前缀/REX/ModRM/SIB/disp/imm 解码，并用 693 条解码向量对齐 RTL。
+M3：分页/异常/IDT；M5：默认切换 XEMU + 1000 fuzz。

@@ -109,7 +109,7 @@ typedef struct {
 - MOV/MOVZX/MOVSX/MOVSXD/LEA、ALU、移位/旋转、INC/DEC/NEG/NOT、MUL/IMUL/DIV/IDIV、
   CDQ/CQO/CBW、XCHG/XADD、CMP/TEST/SETcc/CMOVcc
 - 部分宽度（1/2/4/8）、flags 语义、内存读写、PUSH/POP/CALL/RET、JMP/JCC/LOOP*
-- 当前：`make xemu-regress` 27/37 通过（全部非 SSE 用例）；剩余 10 个 SSE/COMIS 用例在 M4 完成后达成 37/37
+- 状态：`make xemu-regress` **37/37**（整数 + SSE2 子集）、XEMU fuzz 200/200
 - 验收：`make emu-test` 37/37（ref-so 指向 XEMU）+ fuzz 200
 
 ### M3 分页/异常（1–2 周）
@@ -119,12 +119,12 @@ typedef struct {
 - 与 DUT trap 元数据/`raise_intr` 对接
 - 验收：`make sys-test` 10/10 在 `--diff` 下通过（需要 RTL 暴露 trap 事件）
 
-### M4 SSE2（1–2 周）
+### M4 SSE2 子集（已完成）
 
 - MOVD/MOVQ/MOVDQA/MOVUPS/MOVSS/MOVSD
 - PADDD/PSUBD/PAND/POR/PXOR
 - ADD/SUB/MUL/DIV/SQRT/MIN/MAX（标量+打包）、COMIS/UCOMIS、CVT 系列
-- 验收：SSE 定向用例 + SSE fuzz 通过，NaN/部分写语义与 RTL 一致
+- 验收：SSE 定向用例 37/37、fuzz 200/200；NaN/部分写语义与 RTL 一致
 
 ### M5 集成与替换（1 周）
 

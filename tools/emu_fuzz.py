@@ -160,7 +160,11 @@ def main():
         with open(src, "w") as f:
             f.write(gen_program(rng, rng.randrange(20, 60)))
         _, binp = difftest.assemble(src, f"fuzz_{seed}")
-        r = subprocess.run([EMU, "-i", binp], capture_output=True, text=True, timeout=120)
+        cmd = [EMU, "-i", binp]
+        ref = os.environ.get("XEMU_REF")
+        if ref:
+            cmd += [f"--ref-so={ref}"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if r.returncode != 0 or "instructions cross-checked" not in r.stderr:
             failures.append(seed)
             keep = os.path.join(FAILDIR, f"fuzz_{seed}.S")
