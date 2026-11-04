@@ -13,14 +13,19 @@ using memcpy_fn = void (*)(uint64_t, void *, size_t, int);
 using regcpy_fn = void (*)(void *, int);
 using exec_fn = void (*)(uint64_t);
 using skip_fn = void (*)();
+using raise_fn = void (*)(uint64_t);
+using raise_ex_fn = void (*)(uint64_t, uint64_t, uint64_t);
 
 init_fn ref_init = nullptr;
 memcpy_fn ref_memcpy = nullptr;
 regcpy_fn ref_regcpy = nullptr;
 exec_fn ref_exec = nullptr;
 skip_fn ref_skip = nullptr;
+raise_fn ref_raise = nullptr;
+raise_ex_fn ref_raise_ex = nullptr;
 
 bool enabled = false;
+bool after_trap = false;
 uint64_t inst_count = 0;
 constexpr uint64_t FLAG_MASK = 0xFD5;  // CF PF AF ZF SF TF DF OF (same as difftest.py)
 
@@ -57,6 +62,8 @@ bool difftest_init(const char *ref_so, const uint8_t *image, size_t image_size,
   ref_regcpy = (regcpy_fn)dlsym(h, "difftest_regcpy");
   ref_exec = (exec_fn)dlsym(h, "difftest_exec");
   ref_skip = (skip_fn)dlsym(h, "difftest_skip_ref");
+  ref_raise = (raise_fn)dlsym(h, "difftest_raise_intr");
+  ref_raise_ex = (raise_ex_fn)dlsym(h, "difftest_raise_intr_ex");
   if (!ref_init || !ref_memcpy || !ref_regcpy || !ref_exec || !ref_skip) {
     std::fprintf(stderr, "[difftest] %s does not export the difftest ABI\n", ref_so);
     return false;
@@ -80,6 +87,13 @@ bool difftest_step(uint64_t pc, const uint64_t gpr[16],
 
   diff_state ref{};
   ref_regcpy(&ref, DIFFTEST_TO_DUT);
+  if (after_trap) {
+    // Commits belonging to the DUT's trap-entry microcode (LIDT/IRET/CPUID
+    // style) do not correspond to architectural instructions the reference
+    // executed. Drop them until the first handler instruction retires.
+    if (ref.rip != pc) return true;
+    after_trap = false;
+  }
   // Stage-A branches/CALL/RET that redirect in EX do not produce a commit
   // event, so the reference may still be sitting on such an instruction.
   // Let it catch up by executing up to a small budget of instructions until
@@ -182,6 +196,15 @@ bool difftest_check_load(uint64_t addr, const uint8_t *data, uint32_t mask) {
 
 void difftest_skip_next() {
   if (enabled) ref_skip();
+}
+
+void difftest_raise_intr_ex(uint64_t vec, uint64_t err, uint64_t pc) {
+  if (!enabled) return;
+  if (getenv("TRAPTRACE")) std::fprintf(stderr, "[glue] raise vec=%llu err=0x%llx pc=0x%llx\n",
+      (unsigned long long)vec, (unsigned long long)err, (unsigned long long)pc);
+  if (ref_raise_ex) ref_raise_ex(vec, err, pc);
+  else if (ref_raise) ref_raise(vec);
+  after_trap = true;
 }
 
 void difftest_finish() {

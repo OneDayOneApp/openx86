@@ -56,7 +56,13 @@ static uint64_t ea(const XemuInst *d) {
 
 static uint64_t ld(uint64_t addr, int sz) {
   uint8_t b[8] = {0};
-  if (xemu_mem_read(addr, b, sz) != 0) { fprintf(stderr, "[xemu] load fault @0x%llx\n", (unsigned long long)addr); return 0; }
+  if (xemu_vread(addr, b, sz) != 0) {
+    if (!xemu_fault_pending) {
+      xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+      xemu_fault_pending = 1;
+    }
+    return 0;
+  }
   uint64_t v = 0;
   for (int i = 0; i < sz; i++) v |= (uint64_t)b[i] << (8 * i);
   return v;
@@ -65,8 +71,12 @@ static uint64_t ld(uint64_t addr, int sz) {
 static void st(uint64_t addr, uint64_t v, int sz) {
   uint8_t b[8];
   for (int i = 0; i < sz; i++) b[i] = (uint8_t)(v >> (8 * i));
-  if (xemu_mem_write(addr, b, sz) != 0)
-    fprintf(stderr, "[xemu] store fault @0x%llx\n", (unsigned long long)addr);
+  if (xemu_vwrite(addr, b, sz) != 0) {
+    if (!xemu_fault_pending) {
+      xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+      xemu_fault_pending = 1;
+    }
+  }
 }
 
 static uint64_t read_op(const XemuInst *d, int is_a, int sz) {
@@ -219,6 +229,7 @@ int xemu_sse_exec(const XemuInst *d);
 int xemu_exec(const XemuInst *d) {
   int sz = d->opsz;
   uint16_t op = d->op;
+  if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
   if (op >= Ops_MOVD && op <= Ops_CVTTPD2DQ) return xemu_sse_exec(d);
   switch (op) {
     case Ops_MOV:
@@ -491,14 +502,113 @@ int xemu_exec(const XemuInst *d) {
       xemu.halted = 1;
       xemu.rip += d->len;
       return 0;
+    case Ops_MOV_CR: {
+      int cr = (int)(d->imm & 0xff);
+      int is_write = d->cond == 1;
+      uint64_t v = xemu.gpr[d->a_idx];
+      if (!is_write) {
+        switch (cr) {
+          case 0: v = xemu.cr0; break;
+          case 2: v = xemu.cr2; break;
+          case 3: v = xemu.cr3; break;
+          case 4: v = xemu.cr4; break;
+          default: v = 0; break;
+        }
+        write_reg(d->a_idx, v, 8);
+      } else {
+        switch (cr) {
+          case 0: xemu.cr0 = v; break;
+          case 2: xemu.cr2 = v; break;
+          case 3: xemu.cr3 = v & ~0xfffull; break;
+          case 4: xemu.cr4 = v; break;
+        }
+      }
+      break;
+    }
+    case Ops_LIDT: {
+      uint8_t b[10];
+      if (xemu_mem_read(ea(d), b, 10) != 0) return -1;
+      xemu.idtr_limit = (uint16_t)(b[0] | (b[1] << 8));
+      uint64_t base = 0;
+      for (int i = 0; i < 8; i++) base |= (uint64_t)b[2 + i] << (8 * i);
+      xemu.idtr_base = base;
+      break;
+    }
+    case Ops_IRET: {
+      uint64_t vals[5];
+      for (int i = 0; i < 5; i++) {
+        if (xemu_mem_read(xemu.gpr[4], &vals[i], 8) != 0) return -1;
+        xemu.gpr[4] += 8;
+      }
+      xemu.rip = vals[0]; xemu.cs = vals[1]; xemu.rflags = vals[2];
+      xemu.gpr[4] = vals[3]; xemu.ss = vals[4];
+      return 0;
+    }
+    case Ops_CPUID: {
+      uint32_t leaf = (uint32_t)xemu.gpr[0];
+      uint32_t a = 0, b = 0, c = 0, d = 0;
+      if (leaf == 0) { a = 1; b = 0x2d363858; c = 0x65726f43; d = 0x2d484d4b; }
+      else if (leaf == 1) { a = 0x00000663; b = 0; c = 0x07008020; d = 0x07008970; }
+      else if (leaf == 0x80000000u) { a = 0x80000001; }
+      else if (leaf == 0x80000001u) { c = 1; d = 0x20100800; }
+      xemu.gpr[0] = a; xemu.gpr[3] = b; xemu.gpr[1] = c; xemu.gpr[2] = d;
+      break;
+    }
+    case Ops_WRMSR: {
+      uint32_t msr = (uint32_t)xemu.gpr[1];
+      uint64_t v = (xemu.gpr[2] << 32) | (xemu.gpr[0] & 0xffffffffu);
+      switch (msr) {
+        case 0xc0000080: xemu.efer = v; break;
+        case 0xc0000081: xemu.star = v; break;
+        case 0xc0000082: xemu.lstar = v; break;
+        case 0xc0000083: xemu.sfmask = v; break;
+        default: break;
+      }
+      break;
+    }
+    case Ops_RDMSR: {
+      uint32_t msr = (uint32_t)xemu.gpr[1];
+      uint64_t v = 0;
+      switch (msr) {
+        case 0xc0000080: v = xemu.efer; break;
+        case 0xc0000081: v = xemu.star; break;
+        case 0xc0000082: v = xemu.lstar; break;
+        case 0xc0000083: v = xemu.sfmask; break;
+        case 0xc0000100: v = xemu.fs_base; break;
+        case 0xc0000101: v = xemu.gs_base; break;
+        default: break;
+      }
+      xemu.gpr[0] = v & 0xffffffffu;
+      xemu.gpr[2] = v >> 32;
+      break;
+    }
+    case Ops_SYSCALL:
+      xemu.gpr[1] = xemu.rip + d->len;
+      xemu.gpr[11] = xemu.rflags;
+      xemu.rflags &= ~xemu.sfmask;
+      xemu.rip = xemu.lstar;
+      return 0;
+    case Ops_SYSRET:
+      xemu.rip = xemu.gpr[1];
+      xemu.rflags = xemu.gpr[11];
+      return 0;
+    case Ops_INVLPG:
+      break;
+    case Ops_UD2:
+      xemu_raise_exc(6, 0, xemu.rip);
+      return 0;
     case Ops_INT3:
-      fprintf(stderr, "[xemu] INT3 not implemented yet\n");
-      return -1;
+      xemu_raise_exc(3, 0, xemu.rip + d->len);
+      return 0;
+    case Ops_INT:
+      xemu_raise_exc(d->imm & 0xff, 0, xemu.rip + d->len);
+      return 0;
     default:
       fprintf(stderr, "[xemu] unsupported op=%u at rip=0x%llx\n", op,
               (unsigned long long)xemu.rip);
       return -1;
   }
+  if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
   xemu.rip += d->len;
   return 0;
 }

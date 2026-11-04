@@ -8,4 +8,6 @@ void xemu_reset(void) {
   memset(&xemu, 0, sizeof(xemu));
   memset(xemu_mem, 0, sizeof(xemu_mem));
   xemu.rflags = 0x202;
+  xemu.cs = 0x8;
+  xemu.ss = 0x10;
 }

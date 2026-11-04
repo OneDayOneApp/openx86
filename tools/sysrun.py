@@ -9,6 +9,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build", "sys")
 TB = os.path.join(ROOT, "build", "obj_core", "core_tb")
+REF = os.path.join(ROOT, "build", "ref", "libxemu.so")
 
 
 def assemble(src, name):
@@ -20,8 +21,11 @@ def assemble(src, name):
     return binp
 
 
-def run(binp, cycles=2000000):
-    out = subprocess.run([TB, binp, str(cycles)], capture_output=True, text=True, timeout=600)
+def run(binp, cycles=2000000, diff=False):
+    cmd = [TB, binp, str(cycles)]
+    if diff:
+        cmd += ["--diff", f"--ref-so={REF}"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if out.returncode not in (0, 3):
         print(out.stdout, out.stderr)
         raise SystemExit(f"simulation failed rc={out.returncode}")
@@ -29,11 +33,29 @@ def run(binp, cycles=2000000):
 
 
 def main():
-    src = sys.argv[1]
+    args = [a for a in sys.argv[1:] if a != "--diff"]
+    diff = "--diff" in sys.argv[1:]
+    src = args[0]
     name = os.path.splitext(os.path.basename(src))[0]
-    exp_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(src), name + ".expect.json")
+    exp_path = args[1] if len(args) > 1 else os.path.join(os.path.dirname(src), name + ".expect.json")
     binp = assemble(src, name)
     res = run(binp)
+    if diff:
+        import xemu_sysrun as xs
+        st = xs.run_xemu(binp)
+        diffs = []
+        for i in range(16):
+            if int(res["gpr"][i], 16) != st.gpr[i]:
+                diffs.append(f"gpr[{i}] dut=0x{int(res['gpr'][i],16):x} xemu=0x{st.gpr[i]:x}")
+        if int(res["rip"], 16) != st.rip:
+            diffs.append(f"rip dut=0x{int(res['rip'],16):x} xemu=0x{st.rip:x}")
+        if (int(res["flags"], 16) & 0xfd5) != (st.rflags & 0xfd5):
+            diffs.append(f"flags dut=0x{int(res['flags'],16):x} xemu=0x{st.rflags:x}")
+        if diffs:
+            print(f"FAIL {name} (xemu co-sim)")
+            for d in diffs[:10]:
+                print("  " + d)
+            sys.exit(1)
     exp = json.load(open(exp_path)) if os.path.exists(exp_path) else {}
     bad = []
     for k, v in exp.items():

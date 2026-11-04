@@ -1,0 +1,12 @@
+build/
+target/
+project/target/
+project/project/
+.home/
+.bsp/
+*.o
+*.bin
+*.mem
+.DS_Store
+test_run_dir/
+__pycache__/
