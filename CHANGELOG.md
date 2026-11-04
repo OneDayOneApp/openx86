@@ -1,0 +1,34 @@
+# Changelog
+
+## v0.1.0 — 首个公开版本
+
+### 新增
+
+- **Stage-A 顺序核**：变长 x86-64 前端、五级流水、整数 + SSE2 子集、
+  4 级分页、异常/IDT/IRETQ、SYSCALL/SYSRET、CPUID、INVLPG、MSR 子集。
+- **Stage-B 乱序核**：重命名（GPR/flags/XMM）、ROB 32、IQ 8、PRF、
+  StoreBuffer、双发射端口 + 2 宽提交、数据/取指分页。
+- **验证体系**：Unicorn 结束态对拍、Stage-B vs Stage-A 对拍、系统态测试、
+  NEMU 风格逐指令 DiffTest（`build/emu` + `libx86ref.so`）。
+- **随机测试**：`tools/emu_fuzz.py`，固定种子、失败用例落盘。
+- **文档**：微架构手册、Stage-A、验证手册、emu 测试计划、XEMU 研发计划。
+
+### 验证结果
+
+| 套件 | 结果 |
+| --- | --- |
+| 解码向量 | 693 / 693 |
+| Stage-A vs Unicorn | 37 / 37 |
+| 系统测试 | 10 / 10 |
+| Stage-B vs Stage-A | 29 / 29 |
+| emu 逐指令对拍（GPR/XMM/RFLAGS/内存） | 37 / 37 |
+| 随机 fuzz 逐指令对拍 | 200/批，累计 360/360 |
+| Scala 单测 | 21 / 21 |
+
+### 已知限制
+
+- 前端仍为 1 宽译码/派发；ROB/IQ/PRF 规模小于昆明湖 V3。
+- Stage-B 尚无精确异常/IDT。
+- 字符串指令、内存间接 CALL 未实现。
+- `emu --diff` 基于 Unicorn，仅覆盖 paging 关闭的用户态用例。
+- 尚未加入 LICENSE 文件（待定）。
