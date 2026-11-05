@@ -58,19 +58,19 @@ XEMU 是 openx86 项目自研的 x86-64 参考模型（reference model）。
 
 | 层 | 文件 | 行数 | 职责 |
 | --- | --- | ---: | --- |
-| L5 | `difftest.c` | 84 | 导出 NEMU/XiangShan 差分 ABI：`difftest_init/memcpy/regcpy/exec/skip_ref/raise_intr/halted` |
-| L5 | `main.c` | 319 | 参数解析、批处理/监视器、诊断开关、退出时统计 |
-| L4 | `boot.c` | 273 | Linux 引导协议：解析 bzImage / ELF、建零页与 e820、装 initrd、预置长模式恒等映射 |
+| L5 | `difftest.c` | 86 | 导出 NEMU/XiangShan 差分 ABI：`difftest_init/memcpy/regcpy/exec/skip_ref/raise_intr/halted` |
+| L5 | `main.c` | 416 | 参数解析、批处理/监视器、诊断开关、退出时统计 |
+| L4 | `boot.c` | 282 | Linux 引导协议：解析 bzImage / ELF、建零页与 e820、装 initrd、预置长模式恒等映射 |
 | L4 | `dev/port.c` | 53 | 端口空间路由（未映射端口读全 1、写丢弃） |
-| L4 | `dev/uart.c` | 117 | 16550 兼容串口，THR→stdout；stdin 轮询做成中断源 |
-| L4 | `dev/pic.c` | 145 | 8259A 主/从，ICW1-4、OCW1-3、IRR/ISR/IMR、级联 |
+| L4 | `dev/uart.c` | 156 | 16550 兼容串口，THR→stdout；stdin 轮询做成中断源 |
+| L4 | `dev/pic.c` | 147 | 8259A 主/从，ICW1-4、OCW1-3、IRR/ISR/IMR、级联 |
 | L4 | `dev/pit.c` | 124 | 8254 通道 0，模式 0/2/3，锁存读，计满触发 IRQ0 |
-| L3 | `exec.c` | 997 | 指令语义总入口、标志位、乘除移位、串操作、控制转移、段/特权、端口、MSR/CPUID |
+| L3 | `exec.c` | 1185 | 指令语义总入口、标志位、乘除移位、串操作、控制转移、段/特权、端口、MSR/CPUID |
 | L3 | `sse.c` | 463 | SSE/SSE2（整数 SIMD、浮点、搬移、转换） |
 | L3 | `fpu.c` | 376 | x87 栈机、控制/状态字、`FXSAVE`/`FXRSTOR`、`MXCSR` |
-| L2 | `decode.c` | 985 | 表驱动解码：前缀、REX、ModRM/SIB、组扩展、三代 Opcode Map |
-| L2 | `ops.h` | 174 | 统一 op 编号（与 RTL 对齐） |
-| L1 | `mem.c` | 339 | 物理内存 + MMIO、4 级页表遍历 + TLB、异常投递与栈帧、GDT/TSS 读取 |
+| L2 | `decode.c` | 1146 | 表驱动解码：前缀、REX、ModRM/SIB、组扩展、三代 Opcode Map |
+| L2 | `ops.h` | 188 | 统一 op 编号（与 RTL 对齐） |
+| L1 | `mem.c` | 404 | 物理内存 + MMIO、4 级页表遍历 + TLB、异常投递与栈帧、GDT/TSS 读取 |
 | — | `xemu.h` | 164 | `XemuState` / `XemuInst` / 常量 / 跨模块声明 |
 | — | `state.c` | 20 | 复位到体系结构初始状态，并复位各设备 |
 
@@ -285,8 +285,8 @@ make xemu-all-test      → 以上 XEMU 套件合并
 
 | 层 | 缺口 | 影响 |
 | --- | --- | --- |
-| L4 | 无 ACPI SPCR / PNP，8250 无法枚举 | 内核拿不到 console，**当前 Linux 无输出的主因之一** |
-| L4 | 内核对 `earlycon=uart8250` 解析后仍未产生端口访问 | 待定位 |
-| L3 | `rep` 串操作中途缺页的可重启性未验证 | `copy_bootdata` 的真实路径 |
+| L4 | 无 ACPI SPCR / PNP，8250 依赖 `earlyprintk`/`console=ttyS0` 显式声明 | ✅ 已解决：earlycon 与 ttyS0 console 都能工作 |
+| L4 | 16550 发送中断（THRE） | ✅ 已实现：`write(2)` 到 `/dev/console` 可完整输出 |
+| L3 | `rep` 串操作中途缺页 | ✅ `copy_bootdata` 路径已打通（异常帧改虚拟写） |
 | L3 | `SYSENTER/SYSEXIT` 未实现（CPUID 已如实不声明） | 仅影响 32 位快速系统调用 |
 | L1 | 页表修改依赖显式 `invlpg`/`cr3` 刷新，无页结构缓存建模 | 若客户机依赖未失效的旧项会与真机不同 |

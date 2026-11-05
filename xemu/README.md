@@ -1,7 +1,37 @@
 # XEMU
 
 自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，用于替换 `emu` 中的 Unicorn 参考模型。
-文档：[计划](docs/plan.md)、[路线图](docs/roadmap.md)、[Linux 启动计划](docs/linux-plan.md)、[Linux 测试计划](docs/linux-testplan.md)。
+文档：[计划](docs/plan.md)、[路线图](docs/roadmap.md)、[Linux 启动计划](docs/linux-plan.md)、
+[Linux 测试计划](docs/linux-testplan.md)、**[Linux 实测状态](docs/linux-status.md)**。
+
+## 现状：能启动真实 Linux（2026-11-05）
+
+`make xemu-linux-test` 全绿：Linux 6.6.60 走 64 位引导协议，进入用户态
+`/init` 并完成关机流程。
+
+```
+Run /init as init process
+XEMU: /init running as pid 1
+XEMU: initramfs mounted, shutting down
+reboot: System halted
+```
+
+| 门禁 | 结果 |
+| --- | --- |
+| `make xemu-linux-test`（T4，真实内核→用户态） | ✅ 30M 指令 / 4.3 s / ~7 MIPS |
+| `make isa-diff`（Unicorn 逐指令） | 18600/18600 |
+| `make xemu-decode-test`（长度+字段） | 693/693 + 693/693 |
+| `make emu-test`（DUT vs XEMU 逐指令） | 37/37 |
+| `make sys-lockstep-test`（系统逐指令） | 10/10 |
+| `make xemu-dev-test`（XEMU 专属系统/设备测试） | 9/9 |
+
+```bash
+make xemu-linux-runner          # build/xemu-linux（512 MiB RAM）
+tools/linux/build_kernel.sh     # 交叉编译最小内核（Docker）
+tools/linux/mkinitramfs.py      # 生成 initramfs
+make xemu-linux-test            # T4 门禁
+make xemu-isa-scan IMAGE=build/linux/vmlinux   # 静态扫描未实现指令
+```
 
 ## M0 状态（已完成）
 

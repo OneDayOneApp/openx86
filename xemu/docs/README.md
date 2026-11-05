@@ -10,6 +10,7 @@ XEMU 是自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，�
 | [linux-plan.md](linux-plan.md) | v3 | Linux 启动计划：L0–L4（端口 IO/设备、boot protocol、x87、内存权限、工具链） |
 | [linux-testplan.md](linux-testplan.md) | v1 | Linux 测试计划：156 个用例（TC 编号）、回归门禁、失败归档规范 |
 | [architecture.md](architecture.md) | v1 | **软件架构图**：五层结构、模块清单、数据流、存储层、三种使用形态、验证层级、已知偏离与缺口 |
+| [linux-status.md](linux-status.md) | v1 | **实测状态**：已能启动 Linux 到用户态；12 个致命缺陷的定位与修复、诊断工具、多 Agent 分工 |
 
 相关文档：
 
@@ -21,11 +22,12 @@ XEMU 是自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，�
 
 | 项 | 结果 |
 | --- | --- |
-| ISA 对拍（Unicorn） | 14300 / 14300 |
+| **Linux 启动（T4）** | **✅ 用户态 `/init` 跑通** |
+| ISA 对拍（Unicorn） | 18600 / 18600 |
 | 用户态逐指令 | 37 / 37 |
 | 系统逐指令锁步 | 10 / 10 |
 | 系统 co-sim | 10 / 10 |
-| XEMU 专属系统测试（CPL3/timer） | 2 / 2 |
+| XEMU 专属系统测试（CPL3/timer/#PF/SGDT/位操作） | 9 / 9 |
 | 独立运行器 | `make xemu-bin` → `build/xemu` |
 | Bochs 独立仲裁 | 39 / 39（`make bochs-test`） |
 
@@ -35,7 +37,9 @@ XEMU 是自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，�
 make isa-diff           # Unicorn 指令级对拍
 make xemu-test          # 用户态逐指令
 make xemu-regress       # XEMU 定向回归
-make xemu-sys-test      # CPL3 / TSS / timer
+make xemu-sys-test      # CPL3 / TSS / timer / #PF / SGDT / 位操作
+make xemu-linux-test    # **T4：真实 Linux → 用户态 /init**
+make xemu-isa-scan      # 静态扫描内核镜像里的未实现指令
 make sys-lockstep-test  # 系统逐指令锁步（RTL + XEMU）
 make sys-diff-test      # 系统结束态 co-sim
 make xemu-all-test      # 以上组合

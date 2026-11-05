@@ -1053,7 +1053,12 @@ int xemu_exec(const XemuInst *d) {
             (1u << 25) |                             /* SSE  */
             (1u << 26);                              /* SSE2 */
       }
-      else if (leaf == 0x80000000u) { a = 0x80000001; }
+      else if (leaf == 0x80000000u) { a = 0x80000008; }
+      else if (leaf == 0x80000008u) {
+        /* 48-bit virtual, 36-bit physical addresses (matches the pager's
+           MAXPHYADDR and the 512 MiB memory model). */
+        a = (48u << 8) | 36u;
+      }
       else if (leaf == 0x80000001u) { c = 1; d = 0x20100800; }
       xemu.gpr[0] = a; xemu.gpr[3] = b; xemu.gpr[1] = c; xemu.gpr[2] = d;
       break;
@@ -1084,6 +1089,9 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000083: v = xemu.sfmask; break;
         case 0xc0000100: v = xemu.fs_base; break;
         case 0xc0000101: v = xemu.gs_base; break;
+        case 0xc0000102: v = xemu.kernel_gs_base; break;
+        case 0x00000010: v = xemu.tsc; break;      /* IA32_TSC */
+        case 0x0000001b: v = 0; break;             /* IA32_APIC_BASE: no APIC */
         default: break;
       }
       xemu.gpr[0] = v & 0xffffffffu;
@@ -1110,7 +1118,13 @@ int xemu_exec(const XemuInst *d) {
       /* DPL check: INT n is only allowed if gate DPL >= CPL. */
       if (vec < 32) {
         uint8_t gate[16];
-        if (xemu_vread(xemu.idtr_base + vec * 16, gate, 16) == 0) {
+        /* The IDT is supervisor memory; the DPL probe must not fault when
+           it is reached from CPL3 (U/S is enforced by the pager now). */
+        int saved_cpl = xemu.cpl;
+        xemu.cpl = 0;
+        int gate_ok = xemu_vread(xemu.idtr_base + vec * 16, gate, 16) == 0;
+        xemu.cpl = saved_cpl;
+        if (gate_ok) {
           uint64_t low = 0;
           for (int i = 0; i < 8; i++) low |= (uint64_t)gate[i] << (8 * i);
           int dpl = (int)((low >> 45) & 3);

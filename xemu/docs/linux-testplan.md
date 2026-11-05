@@ -397,3 +397,53 @@ make xemu-dev-test
 - 必须可复现（含 seed 与镜像）
 - 修复后化为**永久回归用例**
 - 每个 P0 失败必须在 CHANGELOG 记录
+
+---
+
+## 10. 实测进度（2026-11-05）
+
+T4 已跑通，`make xemu-linux-test` 是当前唯一的顶层门禁。
+
+| 层 | 用例 | 实现 | 结果 |
+| --- | --- | --- | --- |
+| T0 寄存器语义 | L0-IO/L1-BP 子集 | `xemu_sys.py`、`isa_diff.py` | ✅ |
+| T1 指令对拍 | 18600 向量（Unicorn） | `make isa-diff` | ✅ 18600/18600 |
+| T1 解码 | 693 长度 + 693 字段 | `make xemu-decode-test` | ✅ |
+| T1 位操作内存寻址 | `t63_bt_mem` | 以 Bochs 为准（Unicorn 语义不同） | ✅ |
+| T2 设备 | UART/PIC/PIT/端口 | `t50/t51/t52` | ✅ |
+| T2 UART 发送中断 | THRE → IRQ4 | 由 `/init` 的 `write(2)` 端到端覆盖 | ✅ |
+| T3 freestanding | CPL3/TSS/timer/#PF/IDT | `t40/t41/t60/t61/t64` | ✅ |
+| **T4 真实内核** | Linux 6.6.60 → 用户态 `/init` | `make xemu-linux-test` | ✅ |
+| T5 长稳/性能 | — | 见下 | ⬜ |
+
+### T4 判据（当前）
+
+串口必须按序出现：
+
+```
+Linux version
+BIOS-provided physical RAM map
+... command line ...
+Memory: ...
+printk: console [ttyS0] enabled
+APIC: Keep in PIC mode(8259)
+Unpacking initramfs...
+Write protecting the kernel read-only data
+Run /init as init process
+XEMU: /init running as pid 1
+XEMU: initramfs mounted, shutting down
+reboot: System halted
+```
+
+实测：30M 条指令上限内完成，约 4.3 s（~7 MIPS）。
+
+### 尚未覆盖（对应 L3/L4 未完成项）
+
+| 项 | 状态 |
+| --- | --- |
+| U/S、CR0.WP、A/D、RSVD、#PF err 五位 | 进行中（`t7x`） |
+| `RETF` 选择子校验（Bochs 对拍发现） | ⬜ |
+| SGDT/SIDT 64 位伪描述符 | ✅ `t64_sgdt_sidt` |
+| 交互式 busybox shell（L4） | 进行中 |
+| PCI 配置空间桩、更多 MSR | ⬜ |
+| 10 分钟长稳 | ⬜ |

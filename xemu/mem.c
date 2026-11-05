@@ -94,16 +94,30 @@ int xemu_mem_write(uint64_t addr, const void *buf, size_t n) {
  * TLB to keep the old translations alive. Without a TLB every access would
  * fault immediately. A small direct-mapped cache reproduces that behaviour.
  * Entries are flushed on CR3 writes and INVLPG.
+ *
+ * Besides the VA->PA mapping an entry caches the leaf permissions (U/S,
+ * R/W and NX), so the privilege checks apply to TLB hits as well as to page
+ * walks. A/D are sticky: a translation records the accessed bit when it is
+ * established and the dirty bit on its first successful write; later hits do
+ * not rewrite the page tables again.
  */
 #define TLB_BITS 10
 #define TLB_SIZE (1u << TLB_BITS)
 
+#define CR0_WP   (1ull << 16)
+#define CR0_PG   (1ull << 31)
+#define EFER_NXE (1ull << 11)
+
 typedef struct {
-  uint64_t va;      /* page-aligned virtual address, 0 = empty */
-  uint64_t pa;      /* page-aligned physical address */
+  uint64_t va;       /* page-aligned virtual address, 0 = empty */
+  uint64_t pa;       /* page-aligned physical address */
+  uint64_t pte_pa;   /* physical address of the leaf page-table entry */
   uint8_t  present;
-  uint8_t  write;
-  uint8_t  fetch;
+  uint8_t  writable; /* leaf R/W */
+  uint8_t  user;     /* effective U/S (AND over all levels) */
+  uint8_t  exec;     /* leaf executable under the current EFER.NXE */
+  uint8_t  dirty;    /* D already recorded for this translation */
+  uint8_t  level;    /* leaf level: 1 = 1 GiB, 2 = 2 MiB, 3 = 4 KiB */
 } TlbEnt;
 
 static TlbEnt tlb[TLB_SIZE];
@@ -124,38 +138,92 @@ void xemu_tlb_invlpg(uint64_t va) {
     if (tlb[i].present && tlb[i].va == va) tlb[i].present = 0;
 }
 
-/* Cache a successful translation. */
-static void tlb_fill(uint64_t va, uint64_t pa) {
+/* Cache a successful translation together with its leaf permissions. */
+static void tlb_fill(uint64_t va, uint64_t pa, uint64_t pte_pa, int level,
+                     int writable, int user, int exec, int dirty) {
   unsigned i = (unsigned)((va >> 12) & (TLB_SIZE - 1));
-  tlb[i].va = va & ~0xfffull;
-  tlb[i].pa = pa & ~0xfffull;
-  tlb[i].present = 1;
+  TlbEnt *e = &tlb[i];
+  e->va = va & ~0xfffull;
+  e->pa = pa & ~0xfffull;
+  e->pte_pa = pte_pa;
+  e->level = (uint8_t)level;
+  e->present = 1;
+  e->writable = (uint8_t)(writable != 0);
+  e->user = (uint8_t)(user != 0);
+  e->exec = (uint8_t)(exec != 0);
+  e->dirty = (uint8_t)(dirty != 0);
 }
 
-static int tlb_lookup(uint64_t va, uint64_t *pa) {
-  unsigned i = (unsigned)((va >> 12) & (TLB_SIZE - 1));
-  if (tlb[i].present && tlb[i].va == (va & ~0xfffull)) {
-    *pa = tlb[i].pa | (va & 0xfffull);
-    tlb_hits++;
+/* Does a cached translation still satisfy this access? */
+static int tlb_allows(const TlbEnt *e, int write, int fetch) {
+  if (xemu.cpl == 3 && !e->user) return 0;
+  /* A supervisor write may bypass R/W only while CR0.WP is clear. */
+  if (write && !e->writable && (xemu.cpl == 3 || (xemu.cr0 & CR0_WP)))
     return 0;
+  if (fetch && !e->exec) return 0;
+  return 1;
+}
+
+/* Record the dirty bit for a cached translation.  The page-table entry may
+ * have been reused since the walk (Linux zeroes early_top_pgt while it is
+ * still active), so only touch it while it describes the same page. */
+static void tlb_set_dirty(TlbEnt *e) {
+  if (e->dirty) return;
+  e->dirty = 1;
+  uint64_t ent;
+  if (xemu_mem_read(e->pte_pa, &ent, 8) != 0) return;
+  uint64_t mask;
+  switch (e->level) {
+    case 1:  mask = 0x000fffffc0000000ull; break;
+    case 2:  mask = 0x000fffffffe00000ull; break;
+    default: mask = 0x000ffffffffff000ull; break;
   }
-  tlb_misses++;
-  return -1;
+  if (!(ent & 1) || (ent & mask) != (e->pa & mask)) return;
+  ent |= (1ull << 5) | (1ull << 6);   /* A | D */
+  (void)xemu_mem_write(e->pte_pa, &ent, 8);
 }
 
 /* ---------------------------------------------------------------- paging */
+/* #PF error code bits (Intel SDM Table 4-21). */
+#define PF_P    1ull   /* 0 = not present, 1 = protection violation */
+#define PF_W    2ull   /* the access was a write */
+#define PF_U    4ull   /* the access originated at CPL3 */
+#define PF_RSVD 8ull   /* reserved bit violation */
+#define PF_ID   16ull  /* the access was an instruction fetch */
+
+/* With 4-level paging and CR4.PKE == 0 the bits 62:52 of a paging-structure
+ * entry are ignored (software-available): Linux 6.6 stores _PAGE_DEVMAP in
+ * bit 57 and _PAGE_SAVED_DIRTY in bit 58, and treating those as reserved made
+ * every write-protected user PTE (fork/COW) die in page_fault_oops with
+ * "Corrupted page table".  Only the physical-address bits above MAXPHYADDR
+ * are genuinely reserved; XEMU reports MAXPHYADDR = 36 via CPUID.80000008h. */
+#define XEMU_MAXPHYADDR 36
+#define PTE_RSVD_MASK (((1ull << 52) - 1) & ~((1ull << XEMU_MAXPHYADDR) - 1))
+
+static int page_fault(uint64_t va, uint64_t err, uint64_t *errcode) {
+  xemu.cr2 = va;
+  *errcode = err;
+  return -1;
+}
+
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode) {
-  uint64_t err = 0;
-  if (write) err |= 2;
-  /* Bit 2 is U/S: set when the access originates at CPL3. Without it Linux
-     sees a user-mode fault as a supervisor one and oopses instead of doing
-     demand paging. */
-  if (xemu.cpl == 3) err |= 4;
-  if (fetch) err |= 16;
-  if (!(xemu.cr0 & 0x80000000ull)) { *pa = va; *errcode = 0; return 0; }
+  const uint64_t base_err = (write ? PF_W : 0) | (xemu.cpl == 3 ? PF_U : 0) |
+                            (fetch ? PF_ID : 0);
+  if (!(xemu.cr0 & CR0_PG)) { *pa = va; *errcode = 0; return 0; }
 
   tlb_check_cr3();
-  if (tlb_lookup(va, pa) == 0) { *errcode = 0; return 0; }
+
+  unsigned ti = (unsigned)((va >> 12) & (TLB_SIZE - 1));
+  TlbEnt *te = &tlb[ti];
+  int tlb_hit = te->present && te->va == (va & ~0xfffull);
+  if (tlb_hit && tlb_allows(te, write, fetch)) {
+    if (write) tlb_set_dirty(te);
+    tlb_hits++;
+    *pa = te->pa | (va & 0xfffull);
+    *errcode = 0;
+    return 0;
+  }
+  tlb_misses++;
 
   static int dbg = -1;
   if (dbg < 0) dbg = getenv("XEMU_WALK") ? 1 : 0;
@@ -163,42 +231,65 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
     fprintf(stderr, "[walk] va=0x%llx w=%d cr3=0x%llx\n",
             (unsigned long long)va, write, (unsigned long long)xemu.cr3);
   uint64_t table = xemu.cr3 & ~0xfffull;
+  int user_ok = 1;
   for (int level = 0; level < 4; level++) {
     uint64_t idx = (va >> (12 + 9 * (3 - level))) & 0x1ff;
+    uint64_t epa = table + idx * 8;
     uint64_t e;
-    if (xemu_mem_read(table + idx * 8, &e, 8) != 0) { *errcode = err; xemu.cr2 = va; return -1; }
-    if (dbg && (va >> 12) == 0xC00)
-      fprintf(stderr, "[walk]  lvl=%d table=0x%llx idx=%llu e=0x%llx\n",
-              level, (unsigned long long)table,
-              (unsigned long long)idx, (unsigned long long)e);
-    if (!(e & 1)) { *errcode = err; xemu.cr2 = va; return -1; }
-    if (write && !(e & 2)) { *errcode = err | 1; xemu.cr2 = va; return -1; }
-    if (fetch && (e & (1ull << 63)) && (xemu.efer & 0x800)) {
-      *errcode = err | 1; xemu.cr2 = va; return -1;
+    if (xemu_mem_read(epa, &e, 8) != 0)
+      return page_fault(va, base_err, errcode);
+    /* A not-present entry has no reserved-bit semantics; software is free to
+     * use the other bits (Linux stores swap/PROT_NONE information there). */
+    if (!(e & 1))
+      return page_fault(va, base_err, errcode);       /* P = 0 */
+    if (e & PTE_RSVD_MASK)
+      return page_fault(va, base_err | PF_P | PF_RSVD, errcode);
+    if (!(e & 4)) user_ok = 0;
+
+    int is_leaf = (level == 3) ||
+                  ((level == 1 || level == 2) && (e & 0x80));
+    /* Bit 63 is reserved in a non-leaf entry. */
+    if (!is_leaf && (e & (1ull << 63)))
+      return page_fault(va, base_err | PF_P | PF_RSVD, errcode);
+    if (!is_leaf) {
+      /* The R/W flag of the upper levels is enforced too: Linux documents
+       * that page tables must be writable for their children to be. */
+      if (write && !(e & 2))
+        return page_fault(va, base_err | PF_P, errcode);
+      table = e & 0x000ffffffffff000ull;
+      continue;
     }
-    if (level == 1 && (e & 0x80)) { /* 1 GiB */
-      *pa = (e & 0xfffffc0000000ull) + (va & 0x3fffffffull);
-      tlb_fill(va, *pa);
-      *errcode = 0; return 0;
+
+    uint64_t pa_mask, off_mask;
+    switch (level) {
+      case 1:  pa_mask = 0x000fffffc0000000ull; off_mask = 0x3fffffffull; break;
+      case 2:  pa_mask = 0x000fffffffe00000ull; off_mask = 0x1fffffull; break;
+      default: pa_mask = 0x000ffffffffff000ull; off_mask = 0xfffull; break;
     }
-    if (level == 2 && (e & 0x80)) { /* 2 MiB */
-      *pa = (e & 0xfffffffe00000ull) + (va & 0x1fffffull);
-      tlb_fill(va, *pa);
-      *errcode = 0; return 0;
-    }
-    if (level == 3) {
-      /* Mask to the physical-address field: bit 63 is NX and bits 52-62 are
-         ignored/software, so `e & ~0xfff` would fold NX into the address and
-         make every NX data page unreadable. */
-      *pa = (e & 0x000ffffffffff000ull) + (va & 0xfffull);
-      tlb_fill(va, *pa);
-      *errcode = 0; return 0;
-    }
-    table = e & ~0xfffull;
+    uint64_t phys = (e & pa_mask) + (va & off_mask);
+
+    /* U/S: CPL3 may only touch pages that are user-accessible at every
+     * level.  The page is present, so P = 1 in the error code. */
+    if (xemu.cpl == 3 && !user_ok)
+      return page_fault(va, base_err | PF_P, errcode);
+    /* R/W: a value of 0 means read-only.  CPL3 writes always fault; CPL0
+     * writes fault only when CR0.WP is set. */
+    if (write && !(e & 2) && (xemu.cpl == 3 || (xemu.cr0 & CR0_WP)))
+      return page_fault(va, base_err | PF_P, errcode);
+    int exec = !((e & (1ull << 63)) && (xemu.efer & EFER_NXE));
+    if (fetch && !exec)
+      return page_fault(va, base_err | PF_P, errcode);
+
+    /* Set A on any successful access and D on a successful write. */
+    uint64_t ne = e | (1ull << 5) | (write ? (1ull << 6) : 0);
+    if (ne != e && xemu_mem_write(epa, &ne, 8) == 0) e = ne;
+
+    tlb_fill(va, phys, epa, level, (e & 2) != 0, user_ok, exec, write);
+    *pa = phys;
+    *errcode = 0;
+    return 0;
   }
-  *errcode = err;
-  xemu.cr2 = va;
-  return -1;
+  return page_fault(va, base_err, errcode);
 }
 
 uint64_t xemu_fault_err = 0;
@@ -270,7 +361,13 @@ int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *acces
      descriptors such as the TSS use it; the TSS lives in the CPU-entry area
      at 0xfffffe0000..., so dropping it yields a bogus low base). */
   uint8_t d[16];
-  if (xemu_vread(addr, d, 16) != 0) return -1;
+  /* Reading the GDT is a supervisor access even when the instruction that
+     triggered it runs at CPL3. */
+  int saved_cpl = xemu.cpl;
+  xemu.cpl = 0;
+  int rc = xemu_vread(addr, d, 16);
+  xemu.cpl = saved_cpl;
+  if (rc != 0) return -1;
   uint32_t lo = (uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
   uint32_t hi = (uint32_t)d[4] | ((uint32_t)d[5] << 8) | ((uint32_t)d[6] << 16) | ((uint32_t)d[7] << 24);
   uint64_t b = (lo >> 16) & 0xffff;
@@ -298,16 +395,21 @@ int xemu_trace_exc = 0;
 int xemu_trap_frame_compat = 0;
 
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
+  int from_cpl = xemu.cpl;
   if (vec < 32) { xemu_exc_count[vec]++; xemu_exc_pc[vec] = pc; xemu_exc_err[vec] = err; }
   xemu_exc_seq++;
   if (xemu_trace_exc)
     fprintf(stderr, "[exc] #%llu vec=%llu err=0x%llx pc=0x%llx cr2=0x%llx cpl=%d cs=0x%llx ss=0x%llx rsi=0x%llx rdi=0x%llx rax=0x%llx\n",
             (unsigned long long)xemu_exc_seq, (unsigned long long)vec,
             (unsigned long long)err, (unsigned long long)pc,
-            (unsigned long long)xemu.cr2, xemu.cpl,
+            (unsigned long long)xemu.cr2, from_cpl,
             (unsigned long long)xemu.cs, (unsigned long long)xemu.ss,
             (unsigned long long)xemu.gpr[6], (unsigned long long)xemu.gpr[7],
             (unsigned long long)xemu.gpr[0]);
+  /* Exception delivery is a supervisor operation: the IDT/TSS reads and the
+     kernel-stack frame pushes must not be rejected by the CPL3 U/S check.
+     xemu.cpl is set to the handler's privilege at the end. */
+  xemu.cpl = 0;
   uint8_t gate[16];
   uint64_t base = xemu.idtr_base + vec * 16;
   /* The IDT is addressed virtually when paging is on. Fall back to a physical
@@ -330,7 +432,6 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   int gate_type = (int)(attr & 0xf);              /* 0xE interrupt, 0xF trap */
   int dpl = (int)((attr >> 5) & 3);
   int is_interrupt_gate = (gate_type == 0xe);
-  int from_cpl = xemu.cpl;
   int to_cpl = (int)(sel & 3);
 
   /* DPL check for software interrupts (vectors < 32 bypass this). */

@@ -21,9 +21,17 @@ Outputs (both under build/linux/ by default):
 Usage::
 
     tools/linux/mkinitramfs.py [--out FILE] [--busybox PATH] [--cc PATH]
+    tools/linux/mkinitramfs.py --shell --busybox PATH [--out FILE]
+
+The default mode (no ``--shell``) is the original libc-free ``/init`` above.
+With ``--shell`` the image is an interactive busybox system instead: ``/init``
+is a shell script that mounts the pseudo filesystems, prints the banner
+``XEMU-SHELL-READY`` and execs an interactive ``sh`` on ``/dev/ttyS0``.  That
+mode needs a static x86_64 busybox (``tools/linux/fetch_busybox.sh``) but no
+cross compiler, so it works directly on macOS.
 
 If no x86_64 cross compiler is on PATH (e.g. on an Apple Silicon macOS
-host) the script re-runs itself inside the persistent ``xemu-kbuild``
+host) the default mode re-runs itself inside the persistent ``xemu-kbuild``
 Debian arm64 container used by ``build_kernel.sh``.
 """
 
@@ -147,6 +155,51 @@ void _start(void)
 """
 
 # ---------------------------------------------------------------------------
+# /init for --shell mode: a busybox sh script.  The kernel runs it through
+# binfmt_script (CONFIG_BINFMT_SCRIPT=y), i.e. /bin/busybox sh /init.
+#
+# Ordering matters: mount proc/sys/dev first, then print the synchronisation
+# banner, then replace pid 1 with an interactive shell whose fd 0/1/2 are the
+# 8250 serial console.  No job control is required, but setsid gives the shell
+# its own session (and thus a sane SIGHUP/SIGINT story) either way.
+# ---------------------------------------------------------------------------
+SHELL_INIT = r"""#!/bin/busybox sh
+# XEMU interactive shell init (pid 1).
+#
+# devtmpfs is normally already mounted on /dev by the kernel
+# (CONFIG_DEVTMPFS_MOUNT=y); mount it again defensively (EBUSY is ignored) and
+# create the nodes ourselves as a fallback.
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t tmpfs    tmpfs    /tmp 2>/dev/null
+
+[ -c /dev/console ] || mknod /dev/console c 5 1
+[ -c /dev/ttyS0  ] || mknod /dev/ttyS0  c 4 64
+[ -c /dev/null   ] || mknod /dev/null   c 1 3
+
+echo XEMU-SHELL-READY
+
+# Hand the serial console to an interactive shell.  The inner `exec sh` keeps
+# pid 1 alive as the shell, so ^C/^D and builtins behave normally.  Fall back
+# to the kernel-provided console fds if ttyS0 is somehow missing.
+if [ -c /dev/ttyS0 ]; then
+	exec setsid sh -c 'exec sh </dev/ttyS0 >/dev/ttyS0 2>&1'
+fi
+exec sh
+"""
+
+# Applets linked into /bin for --shell mode.  Keep this list to things the
+# test and a human at the console actually need; busybox dispatches by argv[0].
+SHELL_APPLETS = (
+    "sh", "ash", "ls", "cat", "echo", "mount", "umount", "mknod", "setsid",
+    "poweroff", "reboot", "halt", "head", "tail", "ps", "uname", "dmesg",
+    "grep", "sed", "awk", "sleep", "true", "false", "test", "[", "mkdir",
+    "rm", "cp", "mv", "pwd", "id", "whoami", "free", "df", "touch", "chmod",
+    "ln", "sort", "wc", "more", "less", "vi", "kill", "sync", "date",
+)
+
+# ---------------------------------------------------------------------------
 # newc cpio writer
 # ---------------------------------------------------------------------------
 CPIO_MAGIC = b"070701"
@@ -188,25 +241,33 @@ def build_cpio(entries):
     return bytes(out)
 
 
-def default_entries(init_bin, busybox=None):
+def default_entries(init_bin, busybox=None, shell=False):
+    if shell:
+        init_data = SHELL_INIT.encode()
+    else:
+        init_data = init_bin
     entries = [
         # Directories first: the initramfs unpacker needs the parents.
         ("dev", 0o040755, b"", 2, 0, 0),
         ("proc", 0o040755, b"", 2, 0, 0),
         ("sys", 0o040755, b"", 2, 0, 0),
         ("tmp", 0o041777, b"", 2, 0, 0),
+        ("etc", 0o040755, b"", 2, 0, 0),
         # Device nodes; devtmpfs is mounted over /dev by the kernel, these
         # only exist so that the mount point is guaranteed to be present.
         ("dev/console", 0o020600, b"", 1, 5, 1),
         ("dev/null", 0o020666, b"", 1, 1, 3),
         ("dev/tty", 0o020666, b"", 1, 5, 0),
-        ("init", 0o100755, init_bin, 1, 0, 0),
+        ("etc/mtab", 0o120777, b"/proc/mounts", 1, 0, 0),
+        ("init", 0o100755, init_data, 1, 0, 0),
     ]
     if busybox is not None:
         bb = Path(busybox).read_bytes()
         entries.append(("bin", 0o040755, b"", 2, 0, 0))
         entries.append(("bin/busybox", 0o100755, bb, 1, 0, 0))
-        for applet in ("sh", "ls", "cat", "echo", "mount", "poweroff"):
+        applets = SHELL_APPLETS if shell else (
+            "sh", "ls", "cat", "echo", "mount", "poweroff")
+        for applet in applets:
             entries.append(("bin/" + applet, 0o120777,
                             ("busybox").encode(), 1, 0, 0))
     return entries
@@ -286,10 +347,22 @@ def main(argv):
                     help="x86_64 cross compiler (default %(default)s)")
     ap.add_argument("--busybox", default=None,
                     help="optional static x86_64 busybox to include as "
-                         "/bin/busybox (not used by /init)")
+                         "/bin/busybox (required with --shell, otherwise "
+                         "not used by /init)")
+    ap.add_argument("--shell", action="store_true",
+                    help="build the interactive busybox shell image: /init is "
+                         "a shell script and /bin has the usual applet "
+                         "symlinks (requires --busybox, no cross compiler)")
     args = ap.parse_args(argv)
 
-    rc = maybe_reexec_in_container(argv)
+    if args.shell:
+        if not args.busybox:
+            sys.exit("error: --shell requires --busybox PATH")
+        if not Path(args.busybox).is_file():
+            sys.exit("error: busybox not found: %s" % args.busybox)
+        rc = None            # a shell image only embeds files: no compiler
+    else:
+        rc = maybe_reexec_in_container(argv)
     if rc is not None:
         return rc
 
@@ -297,12 +370,18 @@ def main(argv):
     workdir = BUILD_DIR / "initramfs"
     workdir.mkdir(parents=True, exist_ok=True)
 
-    init_bin = compile_init(args.cc, workdir)
+    if args.shell:
+        init_bin = None
+        print("==> --shell: /init is the busybox shell script", file=sys.stderr)
+    else:
+        init_bin = compile_init(args.cc, workdir)
     busybox = args.busybox
     if busybox is not None and not Path(busybox).is_file():
         sys.exit("error: busybox not found: %s" % busybox)
 
-    entries = default_entries(init_bin.read_bytes(), busybox)
+    entries = default_entries(
+        init_bin.read_bytes() if init_bin is not None else b"",
+        busybox, shell=args.shell)
     archive = build_cpio(entries)
 
     out_cpio = out_gz.with_suffix("") if out_gz.suffix == ".gz" else \

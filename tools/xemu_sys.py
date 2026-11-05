@@ -30,6 +30,12 @@ CASES = [
     ("t63_bt_mem", 0x63),
     # L3: 64-bit pseudo-descriptors (SGDT/SIDT) keep the full 64-bit base.
     ("t64_sgdt_sidt", 0x64),
+    # L3: paging permissions / A-D / reserved bits (Intel SDM error code).
+    ("t70_us_violation", 0x70),
+    ("t71_wp_violation", 0x71),
+    ("t72_ad_bits", 0x72),
+    ("t73_rsvd", 0x73),
+    ("t74_user_ok", 0x74),
 ]
 
 
