@@ -49,6 +49,14 @@ CASES = [
     ("t78_cpuid", 0x78),
     # SYSENTER/SYSEXIT must work, since leaf 1 advertises SEP.
     ("t79_sysenter", 0x79),
+    # L3 exceptions: #GP/#SS/#NP/#DF+IST and the INT n DPL check.
+    ("t80_gp_noncanonical", 0x80),
+    ("t81_gp_priv", 0x81),
+    ("t82_ss_np", 0x82),
+    ("t83_df_ist", 0x83),
+    ("t84_intn_dpl", 0x84),
+    # L4: PCI config space stub (0xCF8/0xCFC).
+    ("t85_pci", 0x85),
 ]
 
 

@@ -27,6 +27,7 @@ static const char *watch_pc = NULL;
 static const char *find_str = NULL;
 static const char *stop_at = NULL;
 static FILE *trace_pc_fp = NULL;      /* --trace-pc=FILE: one PC per line */
+static FILE *trace_bb_fp = NULL;      /* --trace-bb=FILE: one BB start per line */
 static long long stop_at_exc = -1;    /* --stop-at-exc=N */
 static const char *dump_vmem = NULL;  /* --dump-vmem=ADDR:LEN (virtual) */
 static int verbose_exc = 0;           /* --trace-exc */
@@ -56,6 +57,103 @@ static void ring_dump(void) {
     fprintf(stderr, "  pc=0x%llx op=%u len=%u\n",
             (unsigned long long)ring[k].pc, (unsigned)ring[k].op, (unsigned)ring[k].len);
   }
+}
+
+/* ---- --trace-bb / --trace-ring diagnostics (L4 itrace tooling) ---- */
+
+/* --trace-bb: the previous executed instruction's end address.  A new basic
+ * block starts whenever the next PC is not exactly that address (branches,
+ * calls, returns, faults and interrupt deliveries all break the fallthrough). */
+static uint64_t bb_prev_end;
+static int bb_have_prev;
+
+/* --trace-ring: a small ring of the last N events, dumped at stop/exit. */
+enum { TRACE_RING_NONE = 0, TRACE_RING_PC, TRACE_RING_EXC, TRACE_RING_MEM };
+static int trace_ring_kind = TRACE_RING_NONE;
+static long trace_ring_cap = 0;       /* --trace-ring=N (0 = disabled) */
+static FILE *trace_ring_fp = NULL;    /* --trace-ring-file=NAME */
+
+struct TraceRingEnt { uint64_t a, b, c, d; uint32_t op, sz; };
+static struct TraceRingEnt *trace_ring;
+static size_t trace_ring_pos;
+static unsigned long trace_ring_cnt;
+static uint64_t trace_ring_last_exc_seq;
+static uint64_t trace_ring_exc_count[32];
+
+static const char *trace_ring_kind_name(int kind) {
+  switch (kind) {
+    case TRACE_RING_PC:  return "pc";
+    case TRACE_RING_EXC: return "exc";
+    case TRACE_RING_MEM: return "mem";
+    default:             return "none";
+  }
+}
+
+static void trace_ring_add(uint64_t a, uint64_t b, uint64_t c, uint64_t d,
+                           uint32_t op, uint32_t sz) {
+  if (trace_ring_kind == TRACE_RING_NONE || trace_ring_cap <= 0) return;
+  if (!trace_ring) {
+    trace_ring = calloc((size_t)trace_ring_cap, sizeof(*trace_ring));
+    if (!trace_ring) return;
+  }
+  struct TraceRingEnt *e = &trace_ring[trace_ring_pos % (size_t)trace_ring_cap];
+  e->a = a; e->b = b; e->c = c; e->d = d; e->op = op; e->sz = sz;
+  trace_ring_pos++;
+  if (trace_ring_cnt < (unsigned long)trace_ring_cap) trace_ring_cnt++;
+}
+
+/* Exceptions are raised deep inside decode/exec, which only expose the
+ * aggregate per-vector counters.  Diff them to learn the vector, then take
+ * the faulting PC/error that xemu_raise_exc recorded for that vector. */
+static void trace_ring_poll_exc(void) {
+  if (trace_ring_kind != TRACE_RING_EXC) return;
+  if (trace_ring_last_exc_seq == xemu_exc_seq) return;
+  for (int v = 0; v < 32; v++) {
+    if (trace_ring_exc_count[v] != xemu_exc_count[v]) {
+      trace_ring_exc_count[v] = xemu_exc_count[v];
+      trace_ring_add(xemu_exc_seq, (uint64_t)v, xemu_exc_pc[v], xemu_exc_err[v], 0, 0);
+    }
+  }
+  trace_ring_last_exc_seq = xemu_exc_seq;
+}
+
+static void dump_trace_ring(void) {
+  if (trace_ring_kind == TRACE_RING_NONE) return;
+  FILE *f = trace_ring_fp ? trace_ring_fp : stderr;
+  const char *kind = trace_ring_kind_name(trace_ring_kind);
+  if (!trace_ring || !trace_ring_cnt) {
+    fprintf(f, "trace-ring %s: 0 entries\n", kind);
+  } else {
+    size_t cap = (size_t)trace_ring_cap;
+    fprintf(f, "---- trace-ring %s (%lu entries, capacity %ld) ----\n",
+            kind, trace_ring_cnt, trace_ring_cap);
+    for (unsigned long i = 0; i < trace_ring_cnt; i++) {
+      size_t idx = (trace_ring_pos - trace_ring_cnt + i) % cap;
+      const struct TraceRingEnt *e = &trace_ring[idx];
+      switch (trace_ring_kind) {
+        case TRACE_RING_PC:
+          fprintf(f, "  pc=0x%llx op=%u len=%u\n",
+                  (unsigned long long)e->a, (unsigned)e->op, (unsigned)e->sz);
+          break;
+        case TRACE_RING_EXC:
+          fprintf(f, "  seq=%llu vec=%llu err=0x%llx pc=0x%llx\n",
+                  (unsigned long long)e->a, (unsigned long long)e->b,
+                  (unsigned long long)e->d, (unsigned long long)e->c);
+          break;
+        case TRACE_RING_MEM:
+          fprintf(f, "  rip=0x%llx ea=0x%llx op=%u sz=%u\n",
+                  (unsigned long long)e->a, (unsigned long long)e->b,
+                  (unsigned)e->op, (unsigned)e->sz);
+          break;
+      }
+    }
+  }
+  if (trace_ring_fp) { fclose(trace_ring_fp); trace_ring_fp = NULL; }
+}
+
+static void close_trace_files(void) {
+  if (trace_pc_fp) { fclose(trace_pc_fp); trace_pc_fp = NULL; }
+  if (trace_bb_fp) { fclose(trace_bb_fp); trace_bb_fp = NULL; }
 }
 
 static int load_image(const char *path) {
@@ -96,8 +194,15 @@ static int step_once(void) {
     }
   }
   if (trace_pc_fp) fprintf(trace_pc_fp, "0x%llx\n", (unsigned long long)xemu.rip);
+  if (trace_bb_fp && (!bb_have_prev || xemu.rip != bb_prev_end))
+    fprintf(trace_bb_fp, "0x%llx\n", (unsigned long long)xemu.rip);
   int rc = xemu_decode(xemu.rip, &inst);
-  if (rc == 1) { steps++; return 0; } /* fetch fault delivered */
+  if (rc == 1) { /* fetch fault delivered: the handler is a new basic block */
+    bb_have_prev = 0;
+    trace_ring_poll_exc();
+    steps++;
+    return 0;
+  }
   if (rc != 0) {
     fprintf(stderr, "xemu: decode failed at rip=0x%llx (rc=%d)\n",
             (unsigned long long)xemu.rip, rc);
@@ -106,6 +211,18 @@ static int step_once(void) {
   if (trace)
     fprintf(stderr, "0x%llx: op=%u len=%u\n",
             (unsigned long long)xemu.rip, (unsigned)inst.op, (unsigned)inst.len);
+  if (trace_ring_kind == TRACE_RING_PC)
+    trace_ring_add(xemu.rip, 0, 0, 0, inst.op, inst.len);
+  if (trace_ring_kind == TRACE_RING_MEM && !inst.illegal && inst.op != Ops_LEA &&
+      (inst.a_kind == XK_MEM || inst.b_kind == XK_MEM)) {
+    uint64_t ea = xemu_ea(&inst);
+    uint32_t sz = inst.memsz ? inst.memsz : inst.opsz;
+    trace_ring_add(xemu.rip, ea, 0, 0, inst.op, sz);
+  }
+  /* The fallthrough end of this instruction; the next step is a new basic
+   * block unless it starts exactly here. */
+  bb_prev_end = xemu.rip + inst.len;
+  bb_have_prev = 1;
   if (trace_cr && (inst.op == Ops_MOV_CR || inst.op == Ops_SYSCALL))
     fprintf(stderr, "cr@0x%llx op=%u cr0=0x%llx cr3=0x%llx cr4=0x%llx rax=0x%llx\n",
             (unsigned long long)xemu.rip, inst.op,
@@ -150,6 +267,7 @@ static int step_once(void) {
     ring_dump();
     return -1;
   }
+  trace_ring_poll_exc();
   steps++;
   return 0;
 }
@@ -298,6 +416,12 @@ static void usage(const char *prog) {
   fprintf(stderr, "  --dump-mem=ADDR:LEN  hex-dump guest physical memory and exit\n");
   fprintf(stderr, "  --dump-vmem=ADDR:LEN hex-dump through the MMU (virtual)\n");
   fprintf(stderr, "  --trace-pc=FILE     write one executed PC per line\n");
+  fprintf(stderr, "  --trace-bb=FILE     write one basic-block start PC per line\n");
+  fprintf(stderr, "  --trace-ring=N      keep the last N events and dump them at stop (bare flag: 64)\n");
+  fprintf(stderr, "  --trace-ring=KIND   select pc|exc|mem for the ring\n");
+  fprintf(stderr, "  --trace-ring-kind=KIND  pc: executed PCs; exc: exception deliveries;\n");
+  fprintf(stderr, "                      mem: instructions with an explicit memory operand (EA)\n");
+  fprintf(stderr, "  --trace-ring-file=NAME  write the ring dump to NAME instead of stderr\n");
   fprintf(stderr, "  --trace-exc         log every exception delivery\n");
   fprintf(stderr, "  --stop-at-exc=N     stop after the Nth exception delivery\n");
   fprintf(stderr, "  --watch-mem=LO:HI   stop at the first physical write into [LO,HI)\n");
@@ -327,7 +451,55 @@ int main(int argc, char **argv) {
     else if (!strncmp(argv[i], "--pc-ring=", 10)) pc_ring = atoi(argv[i] + 10);
     else if (!strncmp(argv[i], "--dump-mem=", 11)) dump_mem = argv[i] + 11;
     else if (!strncmp(argv[i], "--dump-vmem=", 12)) dump_vmem = argv[i] + 12;
-    else if (!strncmp(argv[i], "--trace-pc=", 11)) trace_pc_fp = fopen(argv[i] + 11, "w");
+    else if (!strncmp(argv[i], "--trace-pc=", 11)) {
+      trace_pc_fp = fopen(argv[i] + 11, "w");
+      if (!trace_pc_fp) { perror(argv[i] + 11); return 2; }
+      setvbuf(trace_pc_fp, NULL, _IOFBF, 1u << 20);
+    }
+    else if (!strncmp(argv[i], "--trace-bb=", 11)) {
+      trace_bb_fp = fopen(argv[i] + 11, "w");
+      if (!trace_bb_fp) { perror(argv[i] + 11); return 2; }
+      setvbuf(trace_bb_fp, NULL, _IOFBF, 1u << 20);
+    }
+    else if (!strcmp(argv[i], "--trace-ring")) {
+      trace_ring_cap = 64;
+      if (trace_ring_kind == TRACE_RING_NONE) trace_ring_kind = TRACE_RING_PC;
+    }
+    else if (!strncmp(argv[i], "--trace-ring-kind=", 18)) {
+      const char *k = argv[i] + 18;
+      if (!strcmp(k, "pc")) trace_ring_kind = TRACE_RING_PC;
+      else if (!strcmp(k, "exc")) trace_ring_kind = TRACE_RING_EXC;
+      else if (!strcmp(k, "mem")) trace_ring_kind = TRACE_RING_MEM;
+      else {
+        fprintf(stderr, "xemu: unknown --trace-ring-kind '%s' (pc|exc|mem)\n", k);
+        return 2;
+      }
+      if (trace_ring_cap <= 0) trace_ring_cap = 64;
+    }
+    else if (!strncmp(argv[i], "--trace-ring-file=", 18)) {
+      trace_ring_fp = fopen(argv[i] + 18, "w");
+      if (!trace_ring_fp) { perror(argv[i] + 18); return 2; }
+      setvbuf(trace_ring_fp, NULL, _IOFBF, 1u << 16);
+    }
+    else if (!strncmp(argv[i], "--trace-ring=", 13)) {
+      const char *v = argv[i] + 13;
+      if (!strcmp(v, "pc") || !strcmp(v, "exc") || !strcmp(v, "mem")) {
+        trace_ring_kind = !strcmp(v, "pc") ? TRACE_RING_PC
+                        : !strcmp(v, "exc") ? TRACE_RING_EXC : TRACE_RING_MEM;
+        if (trace_ring_cap <= 0) trace_ring_cap = 64;
+      } else {
+        char *end = NULL;
+        long n = strtol(v, &end, 10);
+        if (end && end != v && *end == '\0' && n >= 0) {
+          trace_ring_cap = n;
+          if (trace_ring_cap > 0 && trace_ring_kind == TRACE_RING_NONE)
+            trace_ring_kind = TRACE_RING_PC;
+        } else {
+          fprintf(stderr, "xemu: --trace-ring needs N or pc|exc|mem, got '%s'\n", v);
+          return 2;
+        }
+      }
+    }
     else if (!strcmp(argv[i], "--trace-exc")) { verbose_exc = 1; xemu_trace_exc = 1; }
     else if (!strncmp(argv[i], "--stop-at-exc=", 14)) stop_at_exc = atoll(argv[i] + 14);
     else if (!strncmp(argv[i], "--watch-byte=", 13)) xemu_watch_byte = (int)strtol(argv[i] + 13, NULL, 16);
@@ -379,6 +551,8 @@ int main(int argc, char **argv) {
         dump_mem_and_exit();
         dump_regs();
         if (pc_ring_buf && pc_ring_pos) dump_pc_ring();
+        close_trace_files();
+        dump_trace_ring();
         return 1;
       }
       xemu_watch_steps++;
@@ -420,10 +594,11 @@ int main(int argc, char **argv) {
     monitor();
   }
   if (dump_vmem) dump_vmem_and_exit();
-  if (trace_pc_fp) fclose(trace_pc_fp);
+  close_trace_files();
   if (find_str) find_in_memory(find_str);
   dump_mem_and_exit();
   if (pc_ring_buf && pc_ring_pos) dump_pc_ring();
+  dump_trace_ring();
   fprintf(stderr, "xemu: tlb hits=%llu misses=%llu\n",
           (unsigned long long)tlb_hits, (unsigned long long)tlb_misses);
   if (xemu_fault_pc)

@@ -262,6 +262,156 @@ static uint64_t pop_val(int sz) {
 
 static int str_dir(void) { return getf(F_DF) ? -1 : 1; }
 
+/* ------------------------------------------------------- privilege checks
+ *
+ * An instruction executed without the privilege it requires raises #GP(0)
+ * (SDM "Privilege Levels"; the error code is 0, bit 6 of the selector error
+ * code is clear).  These checks run before the instruction commits anything,
+ * so the trap frame's RIP is the faulting instruction itself.
+ */
+static int priv_gp(void) {
+  xemu_raise_exc(13, 0, xemu.rip);
+  return 0;
+}
+
+/* IN/OUT and CLI/STI: allowed only while CPL <= IOPL (RFLAGS[13:12]). */
+static int iopl_allows(void) {
+  return xemu.cpl <= (int)((xemu.rflags >> 12) & 3);
+}
+
+/* Control-register bits XEMU models. */
+#define CR4_PCE      (1ull << 8)
+#define CR4_UMIP     (1ull << 11)
+#define CR4_FSGSBASE (1ull << 16)
+
+/* UMIP: SGDT/SIDT/SLDT/STR/SMSW are unprivileged reads of descriptor state
+ * unless CR4.UMIP is set, in which case CPL>0 raises #GP(0) (SDM).  XEMU
+ * does not advertise UMIP through CPUID, so the default CR4 keeps them
+ * legal at CPL3 exactly as the SDM's privilege column requires. */
+static int umip_fault(void) {
+  if (xemu.cpl != 0 && (xemu.cr4 & CR4_UMIP)) return priv_gp();
+  return 0;
+}
+
+/* Is the linear address canonical for 4-level paging?  A branch may not load
+ * RIP with a non-canonical address: that is #GP(0), raised by the branch
+ * instruction itself (the fetched-address check in the pager is only a
+ * backstop for RIPs set without a branch, e.g. by SYSRET). */
+static int canon(uint64_t va) {
+  uint64_t top = va >> 47;   /* bits 63:47 */
+  return top == 0 || top == 0x1ffffull;
+}
+
+/* ------------------------------------------------------- selector loads
+ *
+ * MOV Sreg / far returns load a segment selector through the GDT.  XEMU has
+ * no LDT, so TI=1 always faults; a descriptor index past GDTR.LIMIT faults
+ * too.  Following Bochs load_seg_reg()/fetch_raw_descriptor(), every
+ * selector error code is `selector & 0xfffc`: #GP(selector) for the fetch and
+ * type/privilege failures, #NP(selector) for a not-present data/code segment,
+ * and #SS(selector) for a not-present SS.
+ *
+ * Returns 0 when the load may proceed, 1 when an exception was raised (the
+ * caller must not commit the register write).
+ */
+enum { SEG_DATA = 0, SEG_SS = 1, SEG_CS = 2 };
+
+/* A software interrupt (INT n / INT3) faults when the IDT gate's DPL is
+ * numerically lower than CPL.  The #GP error code is 0 (SDM "INT n, INT3,
+ * INTO"): unlike a selector error there is no selector to report, and the
+ * frame's RIP is the INT instruction because this is a fault.  The IDT is
+ * supervisor memory, so the probe temporarily runs at CPL0. */
+static int swint_dpl_fault(uint64_t vec) {
+  uint8_t gate[16];
+  int saved = xemu.cpl;
+  xemu.cpl = 0;
+  int ok = xemu_vread(xemu.idtr_base + vec * 16, gate, 16) == 0;
+  xemu.cpl = saved;
+  if (!ok) return 0;               /* no readable gate: let delivery report it */
+  int dpl = (int)((gate[5] >> 5) & 3);
+  if (xemu.cpl > dpl) {
+    xemu_raise_exc(13, 0, xemu.rip);
+    return 1;
+  }
+  return 0;
+}
+
+static int seg_load_check(uint64_t sel, int kind) {
+  /* Images that never build a GDT keep the flat model with no descriptors
+     (the model always accepted any selector there). */
+  if (xemu.gdtr_base == 0) return 0;
+  sel &= 0xffff;
+  uint64_t code = sel & 0xfffc;   /* Bochs: every selector error code is the
+                                     selector with RPL/TI cleared */
+  if (code == 0) {
+    /* Null selector (index 0, TI=0).  DS/ES/FS/GS load it with no
+       descriptor lookup at all.  CS can never be null.  In long mode SS may
+       be null when RPL == CPL and CPL != 3: Linux's secondary_startup_64
+       executes `movl %eax,%ss` with EAX=0 at CPL0 on every boot (and KVM and
+       Bochs both special-case exactly this). */
+    if (kind == SEG_DATA) return 0;
+    if (kind == SEG_SS && xemu.cpl != 3 && (sel & 3) == (uint64_t)xemu.cpl)
+      return 0;
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  if (kind == SEG_SS && (sel & 3) != (uint64_t)xemu.cpl) {
+    /* SS.RPL must equal CPL (checked before the descriptor is fetched). */
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  if (kind == SEG_CS && (sel & 3) < (uint64_t)xemu.cpl) {
+    /* A return cannot raise the privilege level without a gate. */
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  if (sel & 4) {                       /* TI=1: no LDT is modelled */
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  uint64_t idx = (sel >> 3) & 0x1fff;
+  if (idx * 8 + 7 > (uint64_t)xemu.gdtr_limit) {
+    xemu_raise_exc(13, code, xemu.rip);   /* fetch_raw_descriptor abort */
+    return 1;
+  }
+  uint32_t acc = 0;
+  if (xemu_gdt_read(sel, NULL, NULL, &acc) != 0) {
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  /* S=0 marks a system descriptor (TSS/LDT/gate); it is not a code or data
+     segment and cannot be loaded into any of these registers. */
+  if (!(acc & 0x10)) {
+    xemu_raise_exc(13, code, xemu.rip);
+    return 1;
+  }
+  uint32_t type = acc & 0x0f;
+  int is_code = (type & 0x8) != 0;
+  int dpl = (int)((acc >> 5) & 3);
+  int rpl = (int)(sel & 3);
+  if (kind == SEG_SS) {
+    /* SS wants a writable data segment with DPL == CPL; a not-present SS
+       raises #SS(selector) (SDM MOV Sreg, Bochs load_seg_reg). */
+    if (is_code || !(type & 0x2)) { xemu_raise_exc(13, code, xemu.rip); return 1; }
+    if (dpl != xemu.cpl) { xemu_raise_exc(13, code, xemu.rip); return 1; }
+    if (!(acc & 0x80)) { xemu_raise_exc(12, code, xemu.rip); return 1; }
+    return 0;
+  }
+  if (kind == SEG_CS) {
+    if (!is_code) { xemu_raise_exc(13, code, xemu.rip); return 1; }
+    if (!(acc & 0x80)) { xemu_raise_exc(11, code, xemu.rip); return 1; }
+    return 0;
+  }
+  /* DS/ES/FS/GS: a data segment or a readable code segment, and the
+     privilege must not exceed DPL (non-conforming code / data). */
+  if (is_code && !(type & 0x2)) { xemu_raise_exc(13, code, xemu.rip); return 1; }
+  if (!is_code || !(type & 0x4)) {   /* data or non-conforming code */
+    if (rpl > dpl || xemu.cpl > dpl) { xemu_raise_exc(13, code, xemu.rip); return 1; }
+  }
+  if (!(acc & 0x80)) { xemu_raise_exc(11, code, xemu.rip); return 1; }
+  return 0;
+}
+
 static int do_string(const XemuInst *d) {
   int sz = d->opsz;
   int dir = str_dir();
@@ -346,6 +496,7 @@ int xemu_exec(const XemuInst *d) {
       do_string(d);
       break;
     case Ops_IN: {
+      if (!iopl_allows()) return priv_gp();
       uint32_t port = d->port_imm ? (uint32_t)(d->imm & 0xffff)
                                   : (uint32_t)(xemu.gpr[2] & 0xffff);
       uint64_t v = 0;
@@ -354,12 +505,14 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_OUT: {
+      if (!iopl_allows()) return priv_gp();
       uint32_t port = d->port_imm ? (uint32_t)(d->imm & 0xffff)
                                   : (uint32_t)(xemu.gpr[2] & 0xffff);
       xemu_port_out(port, d->io_sz, read_reg(0, d->io_sz));
       break;
     }
     case Ops_INS: case Ops_OUTS: {
+      if (!iopl_allows()) return priv_gp();
       int dir = str_dir();
       uint32_t port = (uint32_t)(xemu.gpr[2] & 0xffff);
       uint64_t count = d->rep ? xemu.gpr[1] : 1;
@@ -514,8 +667,18 @@ int xemu_exec(const XemuInst *d) {
         else if (d->b_kind == XK_MEM) st(xemu_ea(d), v, 2);
       } else {
         if (si == 1) break;           /* cannot load CS from r/m */
-        uint64_t v = read_op(d, 1, 2);
-        *segs[si] = v & 0xffff;
+        /* 8E reads the r/m operand, which the decoder stores in B (A holds
+           the segment register itself).  Reading operand A here always
+           yielded 0, so every MOV Sreg,r/m16 silently loaded the null
+           selector. */
+        uint64_t v = read_op(d, 0, 2) & 0xffff;
+        if (xemu_fault_pending) return 0;
+        /* Validate the selector: index past GDTR.LIMIT or TI=1 ->
+           #GP(selector); descriptor type/privilege -> #GP(selector); P=0 ->
+           #NP(selector) (#SS(selector) for SS).  DS/ES/FS/GS may always
+           load the null selector, and so may SS when RPL == CPL at CPL<3. */
+        if (seg_load_check(v, si == 2 ? SEG_SS : SEG_DATA)) return 0;
+        *segs[si] = v;
       }
       break;
     }
@@ -693,7 +856,9 @@ int xemu_exec(const XemuInst *d) {
       break;
     case Ops_JMP:
       if (d->b_kind == XK_IMM) {
-        xemu.rip = xemu.rip + d->len + (uint64_t)d->imm;
+        uint64_t tgt = xemu.rip + d->len + (uint64_t)d->imm;
+        if (!canon(tgt)) return priv_gp();
+        xemu.rip = tgt;
       } else {
         /* An indirect jump through an unmapped address raises #PF inside the
            read.  xemu_raise_exc() has already installed the handler in RIP;
@@ -701,15 +866,23 @@ int xemu_exec(const XemuInst *d) {
            fetch from linear address 0 in kernel mode. */
         uint64_t tgt = read_op(d, 1, 8);
         if (xemu_fault_pending) return 0;
+        if (!canon(tgt)) return priv_gp();
         xemu.rip = tgt;
       }
       return 0;
     case Ops_JCC:
-      if (cond_true(d->cond)) { xemu.rip += d->len + (uint64_t)d->imm; return 0; }
+      if (cond_true(d->cond)) {
+        uint64_t tgt = xemu.rip + d->len + (uint64_t)d->imm;
+        if (!canon(tgt)) return priv_gp();
+        xemu.rip = tgt;
+        return 0;
+      }
       break;
     case Ops_CALL: {
       uint64_t tgt = (d->b_kind == XK_IMM) ? (xemu.rip + d->len + (uint64_t)d->imm)
                                            : read_op(d, 1, 8);
+      if (xemu_fault_pending) return 0;
+      if (!canon(tgt)) return priv_gp();   /* checked before the push */
       int psz = d->opsz == 2 ? 2 : 8;
       push_val(xemu.rip + d->len, psz);
       if (xemu_fault_pending) return 0;   /* keep the handler RIP */
@@ -720,6 +893,11 @@ int xemu_exec(const XemuInst *d) {
       int psz = d->opsz == 2 ? 2 : 8;
       uint64_t tgt = pop_val(psz);
       if (xemu_fault_pending) return 0;   /* keep the handler RIP */
+      if (!canon(tgt)) {
+        /* Faulting return: leave RSP at the instruction's entry value. */
+        xemu.gpr[4] = inst_entry_rsp;
+        return priv_gp();
+      }
       if (d->b_kind == XK_IMM) xemu.gpr[4] += d->imm;
       xemu.rip = tgt;
       return 0;
@@ -765,19 +943,35 @@ int xemu_exec(const XemuInst *d) {
     case Ops_CMC: setf(F_CF, !getf(F_CF)); break;
     case Ops_CLD: setf(F_DF, 0); break;
     case Ops_STD: setf(F_DF, 1); break;
-    case Ops_CLI: setf(F_IF, 0); break;
-    case Ops_STI: setf(F_IF, 1); break;
+    case Ops_CLI:
+      if (!iopl_allows()) return priv_gp();
+      setf(F_IF, 0);
+      break;
+    case Ops_STI:
+      if (!iopl_allows()) return priv_gp();
+      setf(F_IF, 1);
+      break;
     case Ops_LOOP: case Ops_LOOPNE: case Ops_LOOPE: {
       uint64_t c = (xemu.gpr[1] - 1) & 0xffffffffffffffffull;
       xemu.gpr[1] = c;
       int taken = (c != 0);
       if (op == Ops_LOOPNE) taken = taken && !getf(F_ZF);
       if (op == Ops_LOOPE) taken = taken && getf(F_ZF);
-      if (taken) { xemu.rip += d->len + (uint64_t)d->imm; return 0; }
+      if (taken) {
+        uint64_t tgt = xemu.rip + d->len + (uint64_t)d->imm;
+        if (!canon(tgt)) return priv_gp();
+        xemu.rip = tgt;
+        return 0;
+      }
       break;
     }
     case Ops_JRCXZ:
-      if (xemu.gpr[1] == 0) { xemu.rip += d->len + (uint64_t)d->imm; return 0; }
+      if (xemu.gpr[1] == 0) {
+        uint64_t tgt = xemu.rip + d->len + (uint64_t)d->imm;
+        if (!canon(tgt)) return priv_gp();
+        xemu.rip = tgt;
+        return 0;
+      }
       break;
     case Ops_NOP: case Ops_ENDBR:
       break;
@@ -785,10 +979,12 @@ int xemu_exec(const XemuInst *d) {
       /* HLT parks the CPU until an interrupt arrives; it is not program
        * exit. Tests end by storing to the halt MMIO window instead, so keep
        * executing: with IF clear this only advances the RIP. */
+      if (xemu.cpl != 0) return priv_gp();
       xemu.halted_cpu = 1;
       xemu.rip += d->len;
       return 0;
     case Ops_MOV_DR: {
+      if (xemu.cpl != 0) return priv_gp();
       int dreg = (int)(d->imm & 7);
       if (d->cond == 1) xemu.dr[dreg] = xemu.gpr[d->a_idx];
       else write_reg(d->a_idx, xemu.dr[dreg], 8);
@@ -797,6 +993,7 @@ int xemu_exec(const XemuInst *d) {
     case Ops_MOV_CR: {
       /* 0F 20: r64 <- CRn (a_idx = destination GPR, cond = 0)
          0F 22: CRn <- r64 (a_idx = source GPR,      cond = 1) */
+      if (xemu.cpl != 0) return priv_gp();
       int cr = (int)(d->imm & 0xff);
       int is_write = d->cond == 1;
       uint64_t v = xemu.gpr[d->a_idx];
@@ -810,10 +1007,22 @@ int xemu_exec(const XemuInst *d) {
         }
         write_reg(d->a_idx, v, 8);
       } else {
+        /* A reserved bit, or PG without PE, raises #GP(0) and the write has
+           no effect: validate before assigning.  CR0 bits 6..15, 17 and
+           19..63 are reserved in long mode (SDM Figure 2-6). */
+        static const uint64_t cr0_defined = 0xE005003Full;
+        static const uint64_t cr4_defined = 0x01F7FFFFull;
         switch (cr) {
-          case 0: xemu.cr0 = v; break;
+          case 0:
+            if (v & ~cr0_defined) return priv_gp();
+            if ((v & 0x80000000ull) && !(v & 1)) return priv_gp();  /* PG && !PE */
+            xemu.cr0 = v;
+            break;
           case 2: xemu.cr2 = v; break;
           case 3:
+            /* CR3[63:52] are reserved while CR4.PCIDE is clear (XEMU does
+               not advertise PCID). */
+            if (v & 0xfff0000000000000ull) return priv_gp();
             xemu.cr3 = v & ~0xfffull;
             /* A CR3 load invalidates the TLB even when the value is
                unchanged: Linux's flush_tlb_mm()/flush_tlb_local() reload
@@ -823,13 +1032,24 @@ int xemu_exec(const XemuInst *d) {
                parent then corrupts pages shared with the child. */
             xemu_tlb_flush();
             break;
-          case 4: xemu.cr4 = v; break;
+          case 4:
+            if (v & ~cr4_defined) return priv_gp();
+            xemu.cr4 = v;
+            break;
         }
       }
       break;
     }
-    case Ops_CLAC: case Ops_STAC: case Ops_WBINVD: case Ops_SERIALIZE:
-    case Ops_EMMS: case Ops_FWAIT: case Ops_MONITOR: case Ops_MWAIT:
+    case Ops_WBINVD:
+      if (xemu.cpl != 0) return priv_gp();
+      break;
+    case Ops_MONITOR: case Ops_MWAIT:
+      if (xemu.cpl != 0) return priv_gp();
+      break;
+    case Ops_CLAC: case Ops_STAC:
+      if (xemu.cpl != 0) return priv_gp();   /* CPL0 only (SMAP) */
+      break;
+    case Ops_SERIALIZE: case Ops_EMMS: case Ops_FWAIT:
     case Ops_TILERELEASE: case Ops_LKGS: case Ops_PREFETCH: case Ops_UD1:
       break;   /* no architectural state change in this model */
     case Ops_SHLD: case Ops_SHRD: {
@@ -886,22 +1106,25 @@ int xemu_exec(const XemuInst *d) {
       setf(F_ZF, 0);   /* no LDT: selector not usable via LAR */
       break;
     case Ops_XSETBV:
+      if (xemu.cpl != 0) return priv_gp();
       break;
     case Ops_XSAVES: case Ops_XSAVEC: case Ops_XRSTORS:
       break;
-    case Ops_RDFSBASE:
-      write_reg(d->a_idx, xemu.fs_base, 8);
-      break;
-    case Ops_RDGSBASE:
-      write_reg(d->a_idx, xemu.gs_base, 8);
-      break;
-    case Ops_WRFSBASE:
-      xemu.fs_base = read_reg(d->a_idx, 8);
-      break;
-    case Ops_WRGSBASE:
-      xemu.gs_base = read_reg(d->a_idx, 8);
+    case Ops_RDFSBASE: case Ops_RDGSBASE:
+    case Ops_WRFSBASE: case Ops_WRGSBASE:
+      /* With CR4.FSGSBASE clear these are #UD at every privilege level; with
+         it set they are legal at CPL3 (SDM), so there is no #GP here. */
+      if (!(xemu.cr4 & CR4_FSGSBASE)) {
+        xemu_raise_exc(6, 0, xemu.rip);
+        return 0;
+      }
+      if (op == Ops_RDFSBASE) write_reg(d->a_idx, xemu.fs_base, 8);
+      else if (op == Ops_RDGSBASE) write_reg(d->a_idx, xemu.gs_base, 8);
+      else if (op == Ops_WRFSBASE) xemu.fs_base = read_reg(d->a_idx, 8);
+      else xemu.gs_base = read_reg(d->a_idx, 8);
       break;
     case Ops_SWAPGS: {
+      if (xemu.cpl != 0) return priv_gp();
       uint64_t t = xemu.gs_base;
       xemu.gs_base = xemu.kernel_gs_base;
       xemu.kernel_gs_base = t;
@@ -913,6 +1136,8 @@ int xemu_exec(const XemuInst *d) {
       if (op == Ops_RDTSCP) xemu.gpr[1] = (xemu.gpr[1] & ~0xffffffffull);
       break;
     case Ops_RDPMC:
+      /* CPL0 only, unless CR4.PCE makes it available to user mode. */
+      if (xemu.cpl != 0 && !(xemu.cr4 & CR4_PCE)) return priv_gp();
       xemu.gpr[0] = 0; xemu.gpr[2] = 0;
       break;
     case Ops_XGETBV:
@@ -920,6 +1145,7 @@ int xemu_exec(const XemuInst *d) {
       xemu.gpr[2] = 0;
       break;
     case Ops_CLTS:
+      if (xemu.cpl != 0) return priv_gp();
       xemu.cr0 &= ~8ull;
       break;
     case Ops_PAUSE:
@@ -938,12 +1164,15 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_LLDT:
-      /* No LDT is modelled; accept the selector. */
+      /* No LDT is modelled; the instruction is still CPL0 only and the
+         selector must be a readable GDT descriptor. */
+      if (xemu.cpl != 0) return priv_gp();
       break;
     case Ops_VERR: case Ops_VERW:
       setf(F_ZF, 1);   /* selector considered valid: flat model, no LDT */
       break;
     case Ops_SGDT: case Ops_SIDT: {
+      if (umip_fault()) return 0;
       /* Store the pseudo-descriptor: 16-bit limit followed by the 64-bit
          base. Linux issues SGDT with an 8(-byte) offset into a 16-byte
          buffer and only inspects the base, so the full form is written. */
@@ -957,25 +1186,30 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_SMSW: {
+      if (umip_fault()) return 0;
       uint64_t v = xemu.cr0 & 0xffff;
       if (d->a_kind == XK_GPR) write_reg(d->a_idx, v, 2);
       else st(xemu_ea(d), v, 2);
       break;
     }
     case Ops_LMSW: {
+      if (xemu.cpl != 0) return priv_gp();
       uint64_t v = (d->a_kind == XK_GPR) ? read_reg(d->a_idx, 2) : ld(xemu_ea(d), 2);
       xemu.cr0 = (xemu.cr0 & ~0xfull) | (v & 0xf);
       break;
     }
     case Ops_SLDT:
+      if (umip_fault()) return 0;
       if (d->a_kind == XK_GPR) write_reg(d->a_idx, 0, 2);
       else st(xemu_ea(d), 0, 2);
       break;
     case Ops_STR:
+      if (umip_fault()) return 0;
       if (d->a_kind == XK_GPR) write_reg(d->a_idx, xemu.tr_sel, 2);
       else st(xemu_ea(d), xemu.tr_sel, 2);
       break;
     case Ops_LTR: {
+      if (xemu.cpl != 0) return priv_gp();
       uint64_t sel = read_reg(d->a_idx, 2) & 0xffff;
       uint64_t base = 0, limit = 0; uint32_t access = 0;
       if (xemu_gdt_read(sel, &base, &limit, &access) != 0) return -1;
@@ -986,6 +1220,7 @@ int xemu_exec(const XemuInst *d) {
     }
     case Ops_LGDT:
     case Ops_LIDT: {
+      if (xemu.cpl != 0) return priv_gp();
       uint8_t b[10];
       /* The operand is a virtual address: translate through the page tables. */
       if (xemu_vread(xemu_ea(d), b, 10) != 0) {
@@ -1034,15 +1269,22 @@ int xemu_exec(const XemuInst *d) {
        * always 64 bits and no SS:RSP is popped. The kernel uses this to
        * switch from the 32-bit compat segment to the 64-bit code segment. */
       uint64_t new_rip = 0, new_cs = 0;
-      /* The stack holds virtual addresses; translate through the page tables. */
-      if (xemu_vread(xemu.gpr[4], &new_rip, 8) != 0) {
-        xemu_raise_exc(14, 0, xemu.rip); return 0;
+      uint64_t sp = xemu.gpr[4];
+      /* The stack holds virtual addresses; translate through the page tables.
+       * Read both slots before committing anything so a faulting far return
+       * leaves RSP at the instruction's entry value. */
+      if (xemu_vread(sp, &new_rip, 8) != 0) {
+        xemu.gpr[4] = inst_entry_rsp;
+        xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0;
       }
-      xemu.gpr[4] += 8;
-      if (xemu_vread(xemu.gpr[4], &new_cs, 8) != 0) {
-        xemu_raise_exc(14, 0, xemu.rip); return 0;
+      if (xemu_vread(sp + 8, &new_cs, 8) != 0) {
+        xemu.gpr[4] = inst_entry_rsp;
+        xemu_raise_exc(14, xemu_fault_err, xemu.rip); return 0;
       }
-      xemu.gpr[4] += 8;
+      /* Validate the target selector (and the target RIP) first. */
+      if (seg_load_check(new_cs, SEG_CS)) return 0;
+      if (!canon(new_rip)) return priv_gp();
+      xemu.gpr[4] = sp + 16;
       xemu.rip = new_rip;
       xemu.cs = new_cs & 0xffff;
       if (d->imm) xemu.gpr[4] += d->imm;
@@ -1051,15 +1293,35 @@ int xemu_exec(const XemuInst *d) {
     case Ops_IRET: {
       /* The RTL IRET microcode always pops the 5-slot frame. */
       uint64_t vals[5];
+      uint64_t sp = xemu.gpr[4];
       for (int i = 0; i < 5; i++) {
-        if (xemu_vread(xemu.gpr[4], &vals[i], 8) != 0) {
+        if (xemu_vread(sp + (uint64_t)i * 8, &vals[i], 8) != 0) {
           xemu.gpr[4] = inst_entry_rsp;
           xemu_raise_exc(14, xemu_fault_err, xemu.rip);
           return 0;
         }
-        xemu.gpr[4] += 8;
       }
+      /* Validate the return selectors before committing any state, so a
+       * faulting IRET leaves the interrupted context intact. */
+      if (seg_load_check(vals[1], SEG_CS)) return 0;
+      if (!canon(vals[0])) return priv_gp();
       int new_cpl = (int)(vals[1] & 3);
+      uint64_t new_ss = vals[4] & 0xffff;
+      if (xemu.gdtr_base != 0 && new_cpl != xemu.cpl) {
+        /* Returning to an outer privilege level restores SS as well.  As in
+         * Bochs iret64(), a null SS is accepted when the return goes to a
+         * 64-bit ring 0..2 (long mode ignores SS there) and #GP(0)
+         * otherwise; SS.RPL must equal CS.RPL, else #GP(SS selector). */
+        if (new_ss == 0) {
+          if (new_cpl == 3) { xemu_raise_exc(13, 0, xemu.rip); return 0; }
+        } else {
+          if ((new_ss & 3) != (uint64_t)new_cpl) {
+            xemu_raise_exc(13, new_ss & 0xfffc, xemu.rip);
+            return 0;
+          }
+          if (seg_load_check(new_ss, SEG_DATA)) return 0;
+        }
+      }
       xemu.rip = vals[0]; xemu.cs = vals[1]; xemu.rflags = vals[2] | 2;
       xemu.gpr[4] = vals[3]; xemu.ss = vals[4];
       xemu.cpl = new_cpl;
@@ -1112,6 +1374,7 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_WRMSR: {
+      if (xemu.cpl != 0) return priv_gp();
       uint32_t msr = (uint32_t)xemu.gpr[1];
       uint64_t v = (xemu.gpr[2] << 32) | (xemu.gpr[0] & 0xffffffffu);
       switch (msr) {
@@ -1133,6 +1396,7 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_RDMSR: {
+      if (xemu.cpl != 0) return priv_gp();
       uint32_t msr = (uint32_t)xemu.gpr[1];
       uint64_t v = 0;
       switch (msr) {
@@ -1176,7 +1440,7 @@ int xemu_exec(const XemuInst *d) {
         xemu_raise_exc(6, 0, xemu.rip);       /* #UD */
         return 0;
       }
-      if (!cs) return -1;                     /* #GP(0) unmodelled */
+      if (!cs) return priv_gp();               /* CS == 0 is #GP(0) */
       xemu.cs = cs;
       xemu.ss = cs + 8;
       xemu.cpl = 0;
@@ -1193,7 +1457,7 @@ int xemu_exec(const XemuInst *d) {
         xemu_raise_exc(6, 0, xemu.rip);
         return 0;
       }
-      if (!cs || xemu.cpl != 0) return -1;    /* #GP(0) unmodelled */
+      if (!cs || xemu.cpl != 0) return priv_gp();   /* CPL0 only, CS != 0 */
       cs += 16;
       xemu.cs = cs | 3;
       xemu.ss = (cs + 8) | 3;
@@ -1206,38 +1470,26 @@ int xemu_exec(const XemuInst *d) {
       xemu_do_syscall(xemu.rip + d->len);
       return 0;
     case Ops_SYSRET:
+      /* SYSRET loads RIP from RCX; a non-canonical value is #GP(0) and must
+         not be fetched (the pager backstop would report it one instruction
+         late). */
+      if (!canon(xemu.gpr[1])) return priv_gp();
       xemu_do_sysret();
       return 0;
     case Ops_INVLPG:
+      if (xemu.cpl != 0) return priv_gp();
       xemu_tlb_invlpg(xemu_ea(d));
       break;
     case Ops_UD2:
       xemu_raise_exc(6, 0, xemu.rip);
       return 0;
     case Ops_INT3:
+      if (swint_dpl_fault(3)) return 0;
       xemu_raise_exc(3, 0, xemu.rip + d->len);
       return 0;
     case Ops_INT: {
       uint64_t vec = d->imm & 0xff;
-      /* DPL check: INT n is only allowed if gate DPL >= CPL. */
-      if (vec < 32) {
-        uint8_t gate[16];
-        /* The IDT is supervisor memory; the DPL probe must not fault when
-           it is reached from CPL3 (U/S is enforced by the pager now). */
-        int saved_cpl = xemu.cpl;
-        xemu.cpl = 0;
-        int gate_ok = xemu_vread(xemu.idtr_base + vec * 16, gate, 16) == 0;
-        xemu.cpl = saved_cpl;
-        if (gate_ok) {
-          uint64_t low = 0;
-          for (int i = 0; i < 8; i++) low |= (uint64_t)gate[i] << (8 * i);
-          int dpl = (int)((low >> 45) & 3);
-          if (xemu.cpl > dpl) {
-            xemu_raise_exc(13, (uint64_t)(vec << 3) | 2, xemu.rip + d->len);
-            return 0;
-          }
-        }
-      }
+      if (swint_dpl_fault(vec)) return 0;
       xemu_raise_exc(vec, 0, xemu.rip + d->len);
       return 0;
     }
@@ -1278,12 +1530,15 @@ void xemu_do_syscall(uint64_t next_rip) {
 void xemu_do_sysret(void) {
   xemu.rip = xemu.gpr[1];
   xemu.rflags = xemu.gpr[11] | 2;
-  /* SYSRET returns to CPL3 with CS = STAR[63:48]+16, SS = CS+8. */
+  /* SYSRET returns to CPL3 with CS = STAR[63:48]+16 and SS = STAR[63:48]+8
+     (SDM SYSRET), both with RPL 3: Linux's STAR[63:48] is __USER_CS-16 =
+     0x23, so CS=0x33 and SS=0x2b.  Deriving SS from CS (CS+8) produced 0x3b,
+     a selector whose GDT slot is not a data segment; the user process then
+     carried an invalid SS into every later trap frame. */
   uint32_t base = (uint32_t)((xemu.star >> 48) & 0xffff);
   if (base) {
-    uint32_t cs = (base + 16) | 3;
-    xemu.cs = cs;
-    xemu.ss = (cs + 8) | 3;
+    xemu.cs = (base + 16) | 3;
+    xemu.ss = (base + 8) | 3;
     xemu.cpl = 3;
   }
 }

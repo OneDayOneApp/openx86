@@ -206,6 +206,22 @@ static void tlb_set_dirty(TlbEnt *e) {
 #define XEMU_MAXPHYADDR 40
 #define PTE_RSVD_MASK (((1ull << 52) - 1) & ~((1ull << XEMU_MAXPHYADDR) - 1))
 
+/* Marker returned through *errcode when the access must raise #GP(0) instead
+ * of #PF.  A #PF error code is five bits wide, so bit 63 is free; the marker
+ * travels through xemu_fault_err into xemu_raise_exc(), which converts it.
+ *
+ * With 4-level paging a linear address is canonical when bits 63:48 all
+ * replicate bit 47.  A non-canonical address is *not* translated at all: the
+ * SDM (CANONICAL ADDRESSING / #GP) makes the access raise #GP(0), and CR2 is
+ * left untouched because no page fault happened.  Doing this in the pager
+ * covers data reads/writes and instruction fetches alike. */
+#define PF_GP (1ull << 63)
+
+static int va_canonical(uint64_t va) {
+  uint64_t top = va >> 47;   /* bits 63:47 */
+  return top == 0 || top == 0x1ffffull;
+}
+
 static int page_fault(uint64_t va, uint64_t err, uint64_t *errcode) {
   xemu.cr2 = va;
   *errcode = err;
@@ -216,6 +232,8 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
   const uint64_t base_err = (write ? PF_W : 0) | (xemu.cpl == 3 ? PF_U : 0) |
                             (fetch ? PF_ID : 0);
   if (!(xemu.cr0 & CR0_PG)) { *pa = va; *errcode = 0; return 0; }
+  /* Non-canonical linear address: #GP(0), never #PF. */
+  if (!va_canonical(va)) { *errcode = PF_GP; return -1; }
 
   tlb_check_cr3();
 
@@ -311,10 +329,14 @@ static int vaccess(uint64_t va, void *buf, size_t n, int write, int fetch) {
     if (xemu_translate(va, write, fetch, &pa, &err) != 0) {
       /* CR2 holds the faulting linear address for every #PF, read included.
        * The kernel's early boot #PF handler reads CR2 to build the missing
-       * direct-map entry on demand, so a stale value breaks boot. */
-      xemu.cr2 = va;
+       * direct-map entry on demand, so a stale value breaks boot.  A
+       * non-canonical address raises #GP(0) instead, and no fault is
+       * recorded. */
+      if (!(err & PF_GP)) {
+        xemu.cr2 = va;
+        xemu_cr2_at_fault = va;
+      }
       xemu_fault_err = err;
-      xemu_cr2_at_fault = va;
       xemu_fault_pc = xemu.rip;
       return -1;
     }
@@ -356,13 +378,24 @@ static int trap_has_err(uint64_t vec) {
          vec == 29 || vec == 30;
 }
 
+/* Read an 8-byte field of the 64-bit TSS.  The TSS is supervisor memory even
+ * when the faulting instruction ran at CPL3. */
+static int tss_read(uint64_t field, uint64_t *out) {
+  if (xemu.tr_base == 0) return -1;
+  int saved = xemu.cpl;
+  xemu.cpl = 0;
+  int rc = xemu_vread(xemu.tr_base + field, out, 8);
+  xemu.cpl = saved;
+  return rc;
+}
+
 uint64_t xemu_read_tss_rsp0(void) {
   uint64_t v = 0;
   if (xemu.tr_base == 0) {
     fprintf(stderr, "[xemu] TSS base is zero (LTR not executed?)\n");
     return 0;
   }
-  if (xemu_vread(xemu.tr_base + 4, &v, 8) != 0) {
+  if (tss_read(4, &v) != 0) {
     fprintf(stderr, "[xemu] TSS RSP0 read failed at 0x%llx\n",
             (unsigned long long)(xemu.tr_base + 4));
     return 0;
@@ -370,6 +403,15 @@ uint64_t xemu_read_tss_rsp0(void) {
   /* rsp0 is a full 64-bit field in the 64-bit TSS; masking it to 32 bits
      turns e.g. 0xffff888000002fc8 into 0x2fc8 and the first user->kernel
      transition pushes the trap frame at an unmapped address. */
+  return v;
+}
+
+/* The 64-bit TSS stores IST1..IST7 at 0x24 + 8*(n-1) (SDM Figure 7-11).
+ * A zero entry means "no stack for this IST index". */
+static uint64_t xemu_read_tss_ist(int n) {
+  uint64_t v = 0;
+  if (n < 1 || n > 7) return 0;
+  if (tss_read(0x24 + (uint64_t)(n - 1) * 8, &v) != 0) return 0;
   return v;
 }
 
@@ -413,31 +455,42 @@ uint64_t xemu_exc_seq = 0;
 int xemu_trace_exc = 0;
 int xemu_trap_frame_compat = 0;
 
-void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
+/* ------------------------------------------------------- exception delivery
+ *
+ * Building the trap frame is itself a sequence of supervisor memory accesses
+ * (IDT gate, TSS RSP0/IST, the stack pushes), and any of them can fault.  Per
+ * the SDM a fault detected while delivering an exception becomes #DF, and a
+ * fault while delivering #DF is a triple fault.  xemu_deliver_exc() therefore
+ * commits nothing until every push has succeeded, so the #DF delivery still
+ * sees the interrupted context.
+ */
+static void triple_fault(uint64_t vec, uint64_t pc) {
+  fprintf(stderr, "[xemu] triple fault: exception %llu while delivering #DF "
+          "(pc=0x%llx cr2=0x%llx cs=0x%llx cpl=%d)\n",
+          (unsigned long long)vec, (unsigned long long)pc,
+          (unsigned long long)xemu.cr2, (unsigned long long)xemu.cs, xemu.cpl);
+  xemu.halted = 1;
+}
+
+/* Returns 0 when the frame was pushed and the architectural state updated,
+ * -1 when the delivery faulted (caller raises #DF, or triple-faults). */
+static int xemu_deliver_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   int from_cpl = xemu.cpl;
-  if (vec < 32) { xemu_exc_count[vec]++; xemu_exc_pc[vec] = pc; xemu_exc_err[vec] = err; }
-  xemu_exc_seq++;
-  if (xemu_trace_exc)
-    fprintf(stderr, "[exc] #%llu vec=%llu err=0x%llx pc=0x%llx cr2=0x%llx cpl=%d cs=0x%llx ss=0x%llx rsi=0x%llx rdi=0x%llx rax=0x%llx\n",
-            (unsigned long long)xemu_exc_seq, (unsigned long long)vec,
-            (unsigned long long)err, (unsigned long long)pc,
-            (unsigned long long)xemu.cr2, from_cpl,
-            (unsigned long long)xemu.cs, (unsigned long long)xemu.ss,
-            (unsigned long long)xemu.gpr[6], (unsigned long long)xemu.gpr[7],
-            (unsigned long long)xemu.gpr[0]);
-  /* Exception delivery is a supervisor operation: the IDT/TSS reads and the
-     kernel-stack frame pushes must not be rejected by the CPL3 U/S check.
-     xemu.cpl is set to the handler's privilege at the end. */
-  xemu.cpl = 0;
   uint8_t gate[16];
   uint64_t base = xemu.idtr_base + vec * 16;
-  /* The IDT is addressed virtually when paging is on. Fall back to a physical
-   * read so test images that never build a mapping for the IDT still work. */
-  if (xemu_vread(base, gate, 16) != 0 && xemu_mem_read(base, gate, 16) != 0) {
+  /* Exception delivery is a supervisor operation: the IDT/TSS reads and the
+     kernel-stack frame pushes must not be rejected by the CPL3 U/S check.
+     The IDT is addressed virtually when paging is on; fall back to a physical
+     read so test images that never build a mapping for the IDT still work. */
+  int saved_cpl = xemu.cpl;
+  xemu.cpl = 0;
+  int rc = xemu_vread(base, gate, 16);
+  if (rc != 0) rc = xemu_mem_read(base, gate, 16);
+  xemu.cpl = saved_cpl;
+  if (rc != 0) {
     fprintf(stderr, "[xemu] IDT read fault for vector %llu at 0x%llx\n",
             (unsigned long long)vec, (unsigned long long)base);
-    xemu.halted = 1;
-    return;
+    return -1;
   }
   uint64_t low = 0, high = 0;
   for (int i = 0; i < 8; i++) {
@@ -449,15 +502,10 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   uint64_t sel = (low >> 16) & 0xffff;
   uint32_t attr = (uint32_t)((low >> 40) & 0xff); /* IDT type_attr byte */
   int gate_type = (int)(attr & 0xf);              /* 0xE interrupt, 0xF trap */
-  int dpl = (int)((attr >> 5) & 3);
   int is_interrupt_gate = (gate_type == 0xe);
   int to_cpl = (int)(sel & 3);
-
-  /* DPL check for software interrupts (vectors < 32 bypass this). */
-  if (vec < 32 && 0) { /* architecture checks INT n; handled by caller */ }
-  if (vec >= 32 && dpl < from_cpl) {
-    /* should not happen for IRQs; fall through */
-  }
+  /* The IST field lives in bits 34:32 of an IDT gate (byte 4, bits 2:0). */
+  int ist = (int)((low >> 32) & 7);
 
   uint64_t old_rsp = xemu.gpr[4];
   uint64_t old_flags = xemu.rflags;
@@ -467,13 +515,22 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   /* The RTL trap microcode always pushes SS:RSP; mirror that so difftest
      lockstep matches for same-level traps too. */
   uint64_t new_rsp = old_rsp;
-  if (from_cpl != to_cpl) {
+  if (ist != 0) {
+    /* A nonzero IST selects TSS.ISTn regardless of the privilege change. */
+    uint64_t isp = xemu_read_tss_ist(ist);
+    if (isp == 0) {
+      fprintf(stderr, "[xemu] vector %llu uses IST%d but TSS.IST%d is null "
+              "(tss=0x%llx)\n", (unsigned long long)vec, ist, ist,
+              (unsigned long long)xemu.tr_base);
+      return -1;
+    }
+    new_rsp = isp;
+  } else if (from_cpl != to_cpl) {
     uint64_t rsp0 = xemu_read_tss_rsp0();
     if (rsp0 == 0) {
       fprintf(stderr, "[xemu] trap to CPL0 without a valid TSS RSP0 (vec=%llu)\n",
               (unsigned long long)vec);
-      xemu.halted = 1;
-      return;
+      return -1;
     }
     new_rsp = rsp0;
   }
@@ -486,13 +543,24 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   uint64_t frame_cs = (xemu_trap_frame_compat && from_cpl == to_cpl && to_cpl == 0)
                           ? 8 : old_cs;
   uint64_t sp = new_rsp;
-  sp -= 8; xemu_vwrite(sp, &frame_ss, 8);
-  sp -= 8; xemu_vwrite(sp, &old_rsp, 8);
-  sp -= 8; xemu_vwrite(sp, &old_flags, 8);
-  sp -= 8; xemu_vwrite(sp, &frame_cs, 8);
-  sp -= 8; xemu_vwrite(sp, &pc, 8);
+  int ok = 1;
+  /* The frame is written to supervisor memory even when the interrupted
+     context runs at CPL3, so the pushes themselves are CPL0 accesses. */
+  xemu.cpl = 0;
+  sp -= 8; ok &= xemu_vwrite(sp, &frame_ss, 8) == 0;
+  sp -= 8; ok &= xemu_vwrite(sp, &old_rsp, 8) == 0;
+  sp -= 8; ok &= xemu_vwrite(sp, &old_flags, 8) == 0;
+  sp -= 8; ok &= xemu_vwrite(sp, &frame_cs, 8) == 0;
+  sp -= 8; ok &= xemu_vwrite(sp, &pc, 8) == 0;
   if (trap_has_err(vec)) {
-    sp -= 8; xemu_vwrite(sp, &err, 8);
+    sp -= 8; ok &= xemu_vwrite(sp, &err, 8) == 0;
+  }
+  xemu.cpl = from_cpl;
+  if (!ok) {
+    fprintf(stderr, "[xemu] vector %llu: trap frame push faulted at 0x%llx "
+            "(new rsp=0x%llx, cpl=%d->%d)\n", (unsigned long long)vec,
+            (unsigned long long)sp, (unsigned long long)new_rsp, from_cpl, to_cpl);
+    return -1;
   }
   xemu.gpr[4] = sp;
   xemu.cs = sel;
@@ -500,8 +568,38 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   xemu.cpl = to_cpl;
   if (is_interrupt_gate) xemu.rflags = old_flags & ~(1ull << 9);
   xemu.rip = handler;
-  /* Tell the instruction loop that RIP already points at the handler;
-   * it must not add the instruction length on top. */
+  return 0;
+}
+
+void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
+  /* A non-canonical linear address reported by the pager is #GP(0), not #PF;
+     the marker also guarantees CR2 was not written. */
+  if (vec == 14 && (err & PF_GP)) { vec = 13; err = 0; }
+  int from_cpl = xemu.cpl;
+  if (vec < 32) { xemu_exc_count[vec]++; xemu_exc_pc[vec] = pc; xemu_exc_err[vec] = err; }
+  xemu_exc_seq++;
+  if (xemu_trace_exc)
+    fprintf(stderr, "[exc] #%llu vec=%llu err=0x%llx pc=0x%llx cr2=0x%llx cpl=%d cs=0x%llx ss=0x%llx rsi=0x%llx rdi=0x%llx rax=0x%llx\n",
+            (unsigned long long)xemu_exc_seq, (unsigned long long)vec,
+            (unsigned long long)err, (unsigned long long)pc,
+            (unsigned long long)xemu.cr2, from_cpl,
+            (unsigned long long)xemu.cs, (unsigned long long)xemu.ss,
+            (unsigned long long)xemu.gpr[6], (unsigned long long)xemu.gpr[7],
+            (unsigned long long)xemu.gpr[0]);
+  if (xemu_deliver_exc(vec, err, pc) == 0) {
+    /* Tell the instruction loop that RIP already points at the handler;
+     * it must not add the instruction length on top. */
+    xemu_exc_delivered = 1;
+    return;
+  }
+  /* The delivery faulted.  #DF itself failing is a triple fault; anything
+     else escalates to #DF (vector 8, error code always 0), delivered through
+     the normal path so its IST1 stack is used. */
+  if (vec == 8) { triple_fault(vec, pc); return; }
+  if (vec < 32) { xemu_exc_count[8]++; xemu_exc_pc[8] = pc; xemu_exc_err[8] = 0; }
+  fprintf(stderr, "[xemu] #DF after a fault while delivering vector %llu\n",
+          (unsigned long long)vec);
+  if (xemu_deliver_exc(8, 0, pc) != 0) { triple_fault(8, pc); return; }
   xemu_exc_delivered = 1;
 }
 
