@@ -38,6 +38,10 @@ CASES = [
     ("t74_user_ok", 0x74),
     # L3: a faulting stack push must leave CALL/RET atomically un-executed.
     ("t75_call_fault", 0x75),
+    # L3: a CR3 load flushes the TLB even when the value is unchanged (Linux
+    # flushes this way after fork write-protects the parent's COW pages); a
+    # stale writable translation must not bypass the new read-only PTE.
+    ("t76_cr3_flush", 0x76),
 ]
 
 

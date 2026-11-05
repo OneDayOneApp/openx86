@@ -160,8 +160,8 @@ void _start(void)
 #
 # Ordering matters: mount proc/sys/dev first, then print the synchronisation
 # banner, then replace pid 1 with an interactive shell whose fd 0/1/2 are the
-# 8250 serial console.  No job control is required, but setsid gives the shell
-# its own session (and thus a sane SIGHUP/SIGINT story) either way.
+# 8250 serial console.  The final exec must be a shell builtin (no forked
+# setsid applet) so pid 1 itself becomes the shell.
 # ---------------------------------------------------------------------------
 SHELL_INIT = r"""#!/bin/busybox sh
 # XEMU interactive shell init (pid 1).
@@ -180,12 +180,13 @@ mount -t tmpfs    tmpfs    /tmp 2>/dev/null
 
 echo XEMU-SHELL-READY
 
-# Hand the serial console to an interactive shell.  The inner `exec sh` keeps
-# pid 1 alive as the shell, so ^C/^D and builtins behave normally.  Fall back
-# to the kernel-provided console fds if ttyS0 is somehow missing.
-if [ -c /dev/ttyS0 ]; then
-	exec setsid sh -c 'exec sh </dev/ttyS0 >/dev/ttyS0 2>&1'
-fi
+# Hand the serial console to an interactive shell.  `exec` is a shell
+# builtin: pid 1 itself becomes the shell, with the console fds the kernel
+# passed us (they are /dev/console, which is ttyS0 thanks to console=ttyS0).
+# We deliberately do not reopen /dev/ttyS0 here: busybox's line editor then
+# emits an ESC[6n cursor-position query and waits for a terminal reply, which
+# a scripted test does not provide.  Job control is unavailable without a
+# controlling terminal; the shell prints a warning and otherwise works.
 exec sh
 """
 

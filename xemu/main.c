@@ -19,6 +19,9 @@ static int trace = 0;
 static int pc_seen_add(uint64_t v);
 static void dump_regs(void);
 
+static void dump_vmem_and_exit(void);
+static void dump_mem_and_exit(void);
+
 static int trace_cr = 0;
 static const char *watch_pc = NULL;
 static const char *find_str = NULL;
@@ -85,6 +88,10 @@ static int step_once(void) {
               (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3],
               (unsigned long long)xemu.idtr_base, (unsigned long long)xemu.cr2);
       dump_regs();
+      /* --dump-vmem also works for a --stop-at stop, which is the only way
+         to inspect the address space at a corrupted but still-mapped state. */
+      if (dump_vmem) dump_vmem_and_exit();
+      if (dump_mem) dump_mem_and_exit();
       return 1;
     }
   }
@@ -240,6 +247,17 @@ static void find_in_memory(const char *needle) {
 static void dump_vmem_and_exit(void) {
   unsigned long long addr = 0, len = 0;
   if (sscanf(dump_vmem, "%llx:%llx", &addr, &len) != 2) return;
+  {
+    uint64_t pa = 0, err = 0;
+    if (xemu_translate(addr, 0, 0, &pa, &err) == 0)
+      printf("xemu: va 0x%llx -> pa 0x%llx (cr3=0x%llx cpl=%d)\n",
+             (unsigned long long)addr, (unsigned long long)pa,
+             (unsigned long long)xemu.cr3, xemu.cpl);
+    else
+      printf("xemu: va 0x%llx does not translate (err=0x%llx cr3=0x%llx cpl=%d)\n",
+             (unsigned long long)addr, (unsigned long long)err,
+             (unsigned long long)xemu.cr3, xemu.cpl);
+  }
   for (unsigned long long off = 0; off < len; off += 16) {
     printf("%016llx ", addr + off);
     for (unsigned long long k = 0; k < 16 && off + k < len; k++) {

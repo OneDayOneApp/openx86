@@ -1,3 +1,50 @@
+## Unreleased — L4：交互式 busybox shell
+
+在最小 Linux 6.6.60 + busybox（static musl）initramfs 下，XEMU 现在能跑到
+**可交互的串口 shell**：
+
+```
+XEMU-SHELL-READY
+sh: can't access tty; job control turned off
+/ # echo XEMU-ECHO-OK
+XEMU-ECHO-OK
+/ # poweroff -f
+reboot: System halted
+```
+
+### 修复（让 shell 能起来的三个关键缺陷）
+
+- **16550 THRE 发送中断**：THR 写完后置 THRE、按 IER 拉 IRQ4，读 IIR 清除。
+  没有它，tty 层写完 1 字节就等中断，用户态 `write(2)` 只剩第一个字节。
+- **页表保留位掩码**：4 级分页 + `CR4.PKE=0` 时 bits 62:52 是软件可用位，
+  Linux 把 `_PAGE_SAVED_DIRTY` 放在 bit 58、`_PAGE_DEVMAP` 放在 bit 57。
+  原先 `62:51` 全判保留，导致每次 fork/COW 写保护用户 PTE 都
+  `Corrupted page table` → `page_fault_oops`。
+  现在只保留 MAXPHYADDR 之上的物理地址位（CPUID.80000008h 报告 phys=36）。
+- **指令级故障原子性**：`call`/`ret` 的栈访问缺页时，硬件要求指令完全未执行
+  （帧里 RIP=该指令、RSP=进入时的值）。原先在 `st()` 里立刻投递异常、随后
+  `Ops_CALL` 又写 `xemu.rip = target`，覆盖了刚装好的处理程序 RIP，返回时
+  落到被调用者中间且 RSP 在异常栈上。现在记录 `inst_entry_rsp`、缺页时回滚
+  RSP，`CALL`/`RET` 在缺页时不再提交 RIP。
+
+### 新增指令 / 解码
+
+- `9B`（FWAIT）解码到已有的 no-op `Ops_FWAIT`：进程退出时
+  `fpu__drop` 会执行它，原先直接 "unsupported op=255"。
+
+### 诊断
+
+- `--stop-at` 改为在解码**之前**判断，因此可以停在本身取指就会缺页的地址
+  （例如被踩坏的跳转目标），并在该路径上也打印 PC 环形缓冲。
+- 新增 `--watch-va=ADDR`：**虚拟地址**写观察点（过 MMU），可配合
+  `--watch-byte=XX` 只匹配写入的值。用来回答"是谁把 1 写进这个用户栈槽"。
+
+### 已知问题
+
+- `fork` 出来的子进程会在 exec 前 `segfault at 1 ip 1`（用户态 `ret` 从栈上
+  弹出 1），因此 `mount`/`ls`/`cat` 这类非内建命令还跑不了；父 shell 不受影响。
+  正在定位。
+
 ## Unreleased — L1 完成：真实 Linux 引导到用户态 `/init`
 
 `make xemu-linux-test` 首次全绿：Linux 6.6.60 从 64 位引导协议进入

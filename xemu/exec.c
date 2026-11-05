@@ -804,7 +804,16 @@ int xemu_exec(const XemuInst *d) {
         switch (cr) {
           case 0: xemu.cr0 = v; break;
           case 2: xemu.cr2 = v; break;
-          case 3: xemu.cr3 = v & ~0xfffull; break;
+          case 3:
+            xemu.cr3 = v & ~0xfffull;
+            /* A CR3 load invalidates the TLB even when the value is
+               unchanged: Linux's flush_tlb_mm()/flush_tlb_local() reload
+               CR3 with the same value to flush stale entries (e.g. after
+               fork write-protects the parent's COW pages).  Flushing only
+               when the value changes leaves those entries writable and the
+               parent then corrupts pages shared with the child. */
+            xemu_tlb_flush();
+            break;
           case 4: xemu.cr4 = v; break;
         }
       }

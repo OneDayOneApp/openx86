@@ -9,6 +9,7 @@
  */
 #include "../xemu.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -45,10 +46,20 @@ void xemu_uart_reset(void) {
 
 void xemu_uart_poll(void) {
   static uint64_t tick;
+  static int stdin_nonblock;
   if (!xemu_console_serial) return;
   if (uart[0].has_rx) return;
   if ((uart[0].ier & 0x01) == 0) return;   /* nobody is listening */
   if ((++tick % XEMU_UART_POLL_INTERVAL) != 0) return;
+  /* stdin may be a terminal or a pipe with nothing in it: a blocking read
+     here freezes the whole emulator until the host sends a byte (the guest
+     only enables RX interrupts once, so the banner never appears and the
+     console looks hung).  Make it non-blocking once. */
+  if (!stdin_nonblock) {
+    int fl = fcntl(0, F_GETFL);
+    if (fl >= 0) fcntl(0, F_SETFL, fl | O_NONBLOCK);
+    stdin_nonblock = 1;
+  }
   unsigned char c;
   if (read(0, &c, 1) == 1) {
     uart[0].rx = c;

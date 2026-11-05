@@ -205,6 +205,21 @@ int xemu_sse_exec(const XemuInst *d) {
         st_vec(addr, n, src);
       }
       break;
+    /* andps/andnps/orps/xorps: the non-66 forms of the packed bitwise ops.
+       They were decoded (0F 54-57) but had no case here, so any program that
+       used them died with "unsupported op=8x" -- busybox's `ls` is the first
+       one we hit. Results are bitwise and do not depend on the element type. */
+    case Ops_SIMD_AND: case Ops_SIMD_ANDN: case Ops_SIMD_OR: case Ops_SIMD_XOR: {
+      Vec128 r = zero_vec();
+      for (int i = 0; i < 2; i++) {
+        r.u[i] = op == Ops_SIMD_AND  ? (dst.u[i] & src.u[i])
+               : op == Ops_SIMD_ANDN ? ((~dst.u[i]) & src.u[i])
+               : op == Ops_SIMD_OR   ? (dst.u[i] | src.u[i])
+                                     : (dst.u[i] ^ src.u[i]);
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
     case Ops_SIMD_PAND: case Ops_SIMD_POR: case Ops_SIMD_PXOR: {
       Vec128 r = zero_vec();
       for (int i = 0; i < 2; i++) {
@@ -260,6 +275,22 @@ int xemu_sse_exec(const XemuInst *d) {
       r.w[2] = src.w[(imm >> 4) & 3];
       r.w[3] = src.w[(imm >> 6) & 3];
       put_vec(d->a_idx, r);
+      break;
+    }
+    /* pshufhw/pshuflw shuffle one 64-bit half (4 words) and copy the other
+       half through. Vec128 only exposes 4 dwords, so work on a uint16 view:
+       indexing w[4..7] here would run past the union and corrupt the heap. */
+    case Ops_PSHUFHW: case Ops_PSHUFLW: {
+      uint16_t h[8], r[8];
+      memcpy(h, src.u, sizeof(h));
+      memcpy(r, h, sizeof(r));
+      uint8_t imm = (uint8_t)d->imm;
+      int base = (op == Ops_PSHUFHW) ? 4 : 0;
+      for (int i = 0; i < 4; i++)
+        r[base + i] = h[base + ((imm >> (2 * i)) & 3)];
+      Vec128 out = zero_vec();
+      memcpy(out.u, r, sizeof(r));
+      put_vec(d->a_idx, out);
       break;
     }
     case Ops_PUNPCKLBW: case Ops_PUNPCKLWD: case Ops_PUNPCKLDQ: case Ops_PUNPCKLQDQ:

@@ -15,6 +15,8 @@
 | `make xemu-dev-test`（xemu_sys.py） | 7/7 ✅（t40/t41/t50/t51/t52/t60/t61） |
 | `emu-test` / `make emu-regress` | 37/37 ✅ |
 | **`make xemu-linux-test`（T4）** | **PASS ✅ 真实 Linux 6.6.60 跑到用户态 `/init` 并完成** |
+| **交互式 busybox shell** | **✅ 手动验证：banner + `/ #` 提示符 + `echo` 内建命令 + `poweroff`** |
+| fork 子进程 | ❌ 子进程在 exec 前 `segfault at 1 ip 1`（用户态 `ret` 弹出 1） |
 
 `make xemu-linux-test` 实测串口输出：
 

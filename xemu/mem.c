@@ -128,6 +128,10 @@ static uint64_t tlb_cr3 = ~0ull;
 
 void xemu_tlb_flush(void) {
   memset(tlb, 0, sizeof(tlb));
+  /* Remember which CR3 the now-empty TLB belongs to.  A CR3 load with the
+     same value is still an architectural flush (see Ops_MOV_CR), so this
+     keeps the lazy check in tlb_check_cr3() from flushing a second time. */
+  tlb_cr3 = xemu.cr3;
 }
 
 static void tlb_check_cr3(void) {
@@ -317,6 +321,7 @@ static int vaccess(uint64_t va, void *buf, size_t n, int write, int fetch) {
     size_t chunk = 0x1000 - (va & 0xfff);
     if (chunk > n) chunk = n;
     if (write && xemu_watch_va && !xemu_watch_va_hit &&
+        xemu_watch_steps >= xemu_watch_min_steps &&
         xemu_watch_va >= va && xemu_watch_va < va + chunk) {
       const uint8_t *wb = (const uint8_t *)buf;
       uint8_t wv = wb[xemu_watch_va - va];
