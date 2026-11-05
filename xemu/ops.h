@@ -165,10 +165,16 @@ enum {
   Ops_FTST, Ops_FXAM, Ops_FCHS, Ops_FABS, Ops_FSQRT, Ops_FXCH, Ops_FFREE,
   Ops_FLD1, Ops_FLDZ, Ops_FLDPI, Ops_FLDL2E, Ops_FLDL2T, Ops_FLDLG2,
   Ops_FLDLN2, Ops_FNOP,
-  Ops_FXSAVE = 168, Ops_FXRSTOR, Ops_CLFLUSH, Ops_LDMXCSR, Ops_STMXCSR,
+  /* NOTE: the x87 block above runs 160..204. These used to start at 168 and
+     therefore silently aliased FST/FSTP/FILD/... — FXSAVE decoded to FST, and
+     the `op >= Ops_FNINIT && op <= Ops_FNOP` dispatch in exec.c swallowed any
+     new opcode numbered 178..204. Keep this block above Ops_FNOP. */
+  Ops_FXSAVE = 205, Ops_FXRSTOR, Ops_CLFLUSH, Ops_LDMXCSR, Ops_STMXCSR,
   Ops_LFENCE, Ops_MFENCE, Ops_SFENCE, Ops_PREFETCH,
-  Ops_MOV_DR = 177,
-  Ops_SGDT = 178, Ops_SIDT, Ops_SMSW, Ops_LMSW, Ops_SLDT, Ops_STR,
+  Ops_MOV_DR = 214,
+  /* System/legacy expansion implemented in XEMU only (the RTL subset core
+     does not model them). Must stay outside 160..204 (x87 dispatch). */
+  Ops_SGDT = 300, Ops_SIDT, Ops_SMSW, Ops_LMSW, Ops_SLDT, Ops_STR,
   Ops_SWAPGS, Ops_RDTSC, Ops_RDTSCP, Ops_CLTS, Ops_PAUSE, Ops_BSWAP,
   Ops_LLDT, Ops_VERR, Ops_VERW, Ops_XGETBV, Ops_RDPMC,
   Ops_CLAC, Ops_STAC, Ops_SHLD, Ops_SHRD, Ops_POPCNT, Ops_MOVNTI, Ops_WBINVD,

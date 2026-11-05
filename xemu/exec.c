@@ -402,7 +402,13 @@ int xemu_exec(const XemuInst *d) {
       int is_mem = (d->a_kind == XK_MEM);
       uint64_t ea = 0;
       uint64_t off = raw & (uint64_t)(bits - 1);
-      if (is_mem) ea = xemu_ea(d) + ((int64_t)raw / bits) * (uint64_t)sz;
+      if (is_mem) {
+        /* Bochs (cpu/bit64.cc) masks first and then divides, so the element
+           displacement keeps the sign of the (possibly sign-extended imm8)
+           offset: an offset of -56 is element -1, bit 8 -- not element 0. */
+        int64_t disp = (int64_t)(raw & ~((uint64_t)bits - 1));
+        ea = xemu_ea(d) + (uint64_t)(disp / bits) * (uint64_t)sz;
+      }
       uint64_t a = is_mem ? ld(ea, sz) : read_op(d, 1, sz);
       setf(F_CF, (a >> off) & 1);
       if (op != Ops_BT) {
@@ -796,11 +802,13 @@ int xemu_exec(const XemuInst *d) {
     case Ops_SHLD: case Ops_SHRD: {
       /* A = destination r/m, B = source register, count = imm8 or CL.
          Unlike SHL/SHR the source feeds the vacated bits. */
-      int cnt = (d->imm_kind == 1) ? (int)(d->imm & 0xff) : (int)(read_reg(1, 1) & 0xff);
       int bits = sz * 8;
+      /* The count is masked to 5 bits (6 for 64-bit operands) before any
+         other check, so an immediate of 79 on a qword operand means 15. */
+      int cnt = (d->imm_kind == 1) ? (int)(d->imm & 0xff) : (int)(read_reg(1, 1) & 0xff);
+      cnt &= (sz == 8) ? 63 : 31;
       uint64_t m = mask_of(sz);
       if (cnt == 0) break;
-      if (cnt > bits) cnt = bits;
       uint64_t dst = read_op(d, 1, sz);
       uint64_t src = read_op(d, 0, sz);
       uint64_t r;

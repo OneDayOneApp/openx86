@@ -1,3 +1,58 @@
+## Unreleased — L1 完成：真实 Linux 引导到用户态 `/init`
+
+`make xemu-linux-test` 首次全绿：Linux 6.6.60 从 64 位引导协议进入
+`startup_64`，约 2740 万条指令后执行 `Run /init as init process`，
+用户态 `/init` 完成 `write`/`reboot` 并 `reboot: System halted`。
+约 4.2 MIPS（30M 指令 ≈ 7 s）。
+
+### 修复（12 个把内核打死的缺陷）
+
+- 解码组表 `groups[G_15-1]` 越界写坏相邻 `.bss`（x87 状态就排在其后）
+- 异常帧改用**虚拟地址**压栈（原先用物理写，开页后高地址内核栈帧丢失）
+- 异常帧 CS/SS 用真实选择子（原先硬编码 SS=0/CS=8，Linux 认成
+  `__KERNEL32_CS` 走 32 位返回路径）
+- `MOV r/m16, Sreg`（`8C`）方向写反，`movl %cs,%eax` 变成空操作
+- 实现 **AH/CH/DH/BH** 高字节寄存器（原先一律别名到低字节，
+  `testb $0x10,%ah` 读错使 LA57 判断走错分支、printk 宽度错乱）
+- 4KB PTE 屏蔽 **NX 位**（原先 `e & ~0xfff` 把 bit63 折进物理地址，
+  一开 NX 所有数据页不可读）
+- **BT/BTS/BTR/BTC 内存操作数**按位偏移前进有效地址（Bochs 语义）
+- `0F AE` 不再被当成 x87 转义组（FXSAVE/FXRSTOR/CLFLUSH/MXCSR 全部解码成垃圾）
+- `#PF` 错误码补 **U/S 位**（用户缺页被当作内核缺页 → `page_fault_oops`）
+- GDT 描述符取满 **64 位 base**（TSS 在 CPU-entry area，低 32 位截断成 0x3000）
+- TSS `rsp0` 不再截成 32 位
+- 8259A ICW1 不再清 IMR（ICW 序列期间 IRQ0 被投递到未安装的 IDT 项）
+
+### 设备
+
+- 16550 **THRE 发送中断**（IIR=0x02 + IRQ4，读 IIR 清除）：补上后
+  用户态 `write(2)` 才不会被 tty 层卡在第一个字节
+- 8259A OCW2 特指 EOI 的 level 取 bits 2:0
+
+### 新增指令
+
+`SGDT SIDT SMSW LMSW SLDT STR LLDT VERR VERW SWAPGS RDTSC RDTSCP RDPMC
+CLTS PAUSE BSWAP XGETBV CLAC STAC SHLD SHRD POPCNT MOVNTI PREFETCH WBINVD
+EMMS FWAIT RDRAND RDSEED LAR XSETBV XSAVES XSAVEC XRSTORS LKGS MONITOR
+MWAIT TILERELEASE RDFSBASE/RDGSBASE/WRFSBASE/WRGSBASE UD1`
+
+### 工具
+
+- `xemu --trace-exc/--stop-at-exc/--trace-pc/--dump-vmem`
+- `xemu --watch-mem/--watch-byte/--watch-after` 物理写观察点
+- `xemu --serial-stop=STR`
+- `tools/isa_scan.py` + `xemu/isa_scan.c`：静态扫描内核镜像的未实现指令
+- `tools/linux/build_kernel.sh` / `mkinitramfs.py`：Docker 交叉编译最小内核
+- `tools/bochs/{boot_kernel.S,kernel_boot.py,trace_compare.py}`：Bochs 逐指令仲裁
+- `tools/linux/boot_test.py` + `make xemu-linux-test`
+
+### 测试
+
+- `t63_bt_mem`（内存位操作跨元素）、`t64_sgdt_sidt`（64 位伪描述符）
+- `isa-diff` 从 14300 → **18600** 向量：高字节寄存器、SHLD/SHRD、POPCNT、
+  BSWAP、MOVNTI、内存位操作
+- 解码字段测试：立即数操作数的寄存器下标按 don't-care 处理
+
 ## Unreleased — L1：真实内核进入 startup_64
 
 ### 新增

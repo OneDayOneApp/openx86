@@ -171,12 +171,12 @@ XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c xemu/main.c
 .PHONY: xemu-so
 xemu-so: $(XEMU_SO)
 
-$(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
+$(XEMU_SO): $(XEMU_SRC) xemu/xemu.h xemu/ops.h ref/difftest_abi.h
 	@mkdir -p build/ref
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared $(XEMU_DEFS) \
 	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
-build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h
+build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h xemu/ops.h
 	@mkdir -p build
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra $(XEMU_DEFS) \
 	  $(XEMU_SRC) xemu/main.c -o $@ -lm
@@ -184,7 +184,7 @@ build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h
 xemu-bin: build/xemu
 
 # Static decoder coverage scan over a kernel image (see tools/isa_scan.py).
-build/xemu_isa_scan: $(XEMU_SRC) xemu/isa_scan.c xemu/xemu.h
+build/xemu_isa_scan: $(XEMU_SRC) xemu/isa_scan.c xemu/xemu.h xemu/ops.h
 	@mkdir -p build
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra $(XEMU_DEFS) \
 	  $(XEMU_SRC) xemu/isa_scan.c -o $@ -lm
@@ -196,8 +196,21 @@ xemu-isa-scan: build/xemu_isa_scan
 # T4 gate: real Linux boots to userspace and runs /init (see xemu/docs/linux-testplan.md).
 # Artifacts come from tools/linux/build_kernel.sh + tools/linux/mkinitramfs.py.
 .PHONY: xemu-linux-test
-xemu-linux-test: xemu-bin
-	python3 tools/linux/boot_test.py
+# The kernel is linked at physical 0x1000000 and needs >26 MiB of guest RAM.
+# Guest memory is a build-time constant, so the Linux runner is a separate
+# binary with the bigger -DXEMU_MEM_SIZE_MB instead of flipping build/xemu.
+XEMU_LINUX_MEM_MB ?= 512
+build/xemu-linux: $(XEMU_SRC) xemu/main.c xemu/xemu.h xemu/ops.h
+	@mkdir -p build
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
+	  -DXEMU_MEM_SIZE_MB=$(XEMU_LINUX_MEM_MB) $(XEMU_SRC) xemu/main.c -o $@ -lm
+
+.PHONY: xemu-linux-runner
+xemu-linux-runner: build/xemu-linux
+
+.PHONY: xemu-linux-test
+xemu-linux-test: build/xemu-linux
+	python3 tools/linux/boot_test.py --xemu build/xemu-linux
 
 .PHONY: isa-diff
 isa-diff: xemu-so
@@ -215,13 +228,15 @@ xemu-test: emu xemu-so
 XEMU_DECODE_TEST := build/xemu_decode_test
 XEMU_FIELD_TEST := build/xemu_decode_field_test
 
-$(XEMU_DECODE_TEST): xemu/decode.c xemu/decode_test.c xemu/mem.c xemu/state.c
+$(XEMU_DECODE_TEST): xemu/decode.c xemu/decode_test.c xemu/mem.c xemu/state.c $(wildcard xemu/dev/*.c)
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
-	  xemu/decode.c xemu/mem.c xemu/state.c xemu/decode_test.c -o $@
+	  xemu/decode.c xemu/mem.c xemu/state.c $(wildcard xemu/dev/*.c) \
+	  xemu/decode_test.c -o $@
 
-$(XEMU_FIELD_TEST): xemu/decode.c xemu/decode_field_test.c xemu/mem.c xemu/state.c
+$(XEMU_FIELD_TEST): xemu/decode.c xemu/decode_field_test.c xemu/mem.c xemu/state.c $(wildcard xemu/dev/*.c)
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
-	  xemu/decode.c xemu/mem.c xemu/state.c xemu/decode_field_test.c -o $@
+	  xemu/decode.c xemu/mem.c xemu/state.c $(wildcard xemu/dev/*.c) \
+	  xemu/decode_field_test.c -o $@
 
 .PHONY: xemu-regress xemu-decode-test
 xemu-regress: emu xemu-so

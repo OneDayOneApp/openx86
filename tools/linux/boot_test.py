@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-XEMU = os.path.join(ROOT, "build", "xemu")
+XEMU = os.path.join(ROOT, "build", "xemu-linux")
 
 # (label, substring) checked in order against the serial console.
 MILESTONES = [
@@ -44,6 +44,7 @@ END_STATES = [
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--xemu", default=XEMU)
     ap.add_argument("--kernel", default=os.path.join(ROOT, "build", "linux", "vmlinux"))
     ap.add_argument("--initrd", default=os.path.join(ROOT, "build", "linux", "initramfs.cpio.gz"))
     ap.add_argument("--cmdline", default="console=ttyS0")
@@ -53,13 +54,14 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    if not os.path.exists(XEMU):
-        sys.exit("build/xemu missing; run `make xemu-bin` first")
+    xemu_bin = os.path.join(ROOT, args.xemu) if not os.path.isabs(args.xemu) else args.xemu
+    if not os.path.exists(xemu_bin):
+        sys.exit(f"{args.xemu} missing; run `make xemu-linux-runner` first")
     for p in (args.kernel, args.initrd):
         if not os.path.exists(p):
             sys.exit(f"missing {p}; run `tools/linux/build_kernel.sh` and `tools/linux/mkinitramfs.py`")
 
-    cmd = [XEMU, "--kernel", args.kernel, f"--cmdline={args.cmdline}",
+    cmd = [xemu_bin, "--kernel", args.kernel, f"--cmdline={args.cmdline}",
            "--initrd", args.initrd, "-b", f"--max-steps={args.max_steps}"]
     t0 = time.time()
     try:

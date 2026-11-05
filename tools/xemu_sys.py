@@ -25,6 +25,11 @@ CASES = [
     # L1: paging + exception mechanisms (bottom-up)
     ("t60_pf_cr2", 0x60),
     ("t61_early_idt", 0x61),
+    # L3: memory bit-ops must advance the element address (Bochs-verified
+    # semantics; Unicorn disagrees, so this is a XEMU-only oracle test).
+    ("t63_bt_mem", 0x63),
+    # L3: 64-bit pseudo-descriptors (SGDT/SIDT) keep the full 64-bit base.
+    ("t64_sgdt_sidt", 0x64),
 ]
 
 

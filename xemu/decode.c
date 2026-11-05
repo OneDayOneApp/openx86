@@ -16,7 +16,11 @@ enum { G_NONE = 0, G_1 = 1, G_2 = 2, G_3 = 3, G_4 = 4, G_5 = 5, G_11 = 6, G_1A =
 enum { SIMD_NONE = 0, SIMD_SS = 1, SIMD_SD = 2, SIMD_PS = 3, SIMD_PD = 4, SIMD_DQ = 5 };
 
 typedef struct {
-  uint8_t op, modrm, imm, dir, group, force8, form, sse_sel, store;
+  /* `op` must be at least 16 bits wide: the opcode enum does not fit in a
+     byte (the x87 block alone reaches 204, the XEMU-only expansion starts at
+     300), and a truncated value silently aliases a different instruction. */
+  uint16_t op;
+  uint8_t modrm, imm, dir, group, force8, form, sse_sel, store;
 } DInfo;
 
 /* Row index is `group - 1`, so G_15 (9) addresses row 8: nine rows, not
@@ -645,15 +649,19 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   else if (isInvlpg) op = Ops_INVLPG;
   /* 0F 01: SGDT/SIDT/LGDT/LIDT/SMSW/LMSW/INVLPG (the /4 and /5 slots are
      VERR/VERW for 0F 00 and unused here). */
-  if (isGdtLtr && !rm_is_reg) {
-    switch (reg) {
-      case 0: op = Ops_SGDT; break;
-      case 1: op = Ops_SIDT; break;
-      case 2: op = Ops_LGDT; break;
-      case 3: op = Ops_LIDT; break;
-      case 4: op = Ops_SMSW; break;
-      case 6: op = Ops_LMSW; break;
-      default: break;
+  if (is0F && opcode == 0x01 && !is3) {
+    /* SMSW/LMSW accept a register or memory operand; SGDT/SIDT/LGDT/LIDT are
+       memory-only. */
+    if (reg == 4) op = Ops_SMSW;
+    else if (reg == 6) op = Ops_LMSW;
+    else if (!rm_is_reg) {
+      switch (reg) {
+        case 0: op = Ops_SGDT; break;
+        case 1: op = Ops_SIDT; break;
+        case 2: op = Ops_LGDT; break;
+        case 3: op = Ops_LIDT; break;
+        default: break;
+      }
     }
   }
   /* 0F 00: SLDT/STR/LLDT/LTR/VERR/VERW. */

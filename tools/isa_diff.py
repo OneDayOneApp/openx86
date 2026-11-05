@@ -154,7 +154,7 @@ def base_mn(asm):
 def flag_mask(asm):
     base = base_mn(asm)
     mask = BASE_MASK
-    if base in {"shl","shr","sar","rol","ror","rcl","rcr"}:
+    if base in {"shl","shr","sar","rol","ror","rcl","rcr","shld","shrd"}:
         mask &= ~((1<<FLAG_OF)|(1<<FLAG_AF))
     if base in {"mul","imul"}:
         mask &= ~((1<<FLAG_PF)|(1<<FLAG_AF)|(1<<FLAG_ZF)|(1<<FLAG_SF))
@@ -188,6 +188,11 @@ def check(asm, code, rng):
     mem = bytes(rng.getrandbits(8) for _ in range(0x400))
     b = base_mn(asm)
     if b in {"bt", "bts", "btr", "btc"}:
+        # Unicorn does NOT advance the effective address for bit offsets past
+        # the operand size (real hardware and Bochs do: see
+        # cpu/bit64.cc BTS_EqGqM). Keep the oracle comparison inside the
+        # offset range where both agree; the element-advance path is covered
+        # by tests/system/t63_bt_mem.S with Bochs-verified semantics.
         st.gpr[1] = rng.randrange(0, 64)
     if ("*%rcx" in asm) or ("*0x30(%r14)" in asm):
         tgt = ENTRY + 0x100
@@ -195,6 +200,8 @@ def check(asm, code, rng):
         mem = bytearray(mem)
         mem[0x30:0x38] = tgt.to_bytes(8, "little")
         mem = bytes(mem)
+    if b in {"shld", "shrd"} and "%cl" in asm:
+        st.gpr[1] = rng.randrange(1, 16)   # defined range for every operand size
     if b in {"movs", "stos", "lods", "scas", "cmps"}:
         st.gpr[6] = DATA + 0x100
         st.gpr[7] = DATA + 0x200
@@ -204,6 +211,9 @@ def check(asm, code, rng):
         else:
             st.rflags |= (1 << 10)
     lib = load_xemu()
+    if os.environ.get("ISA_TRACE"):
+        sys.stderr.write(f"[vector] {asm}  ({code.hex()})\n")
+        sys.stderr.flush()
     xout, xmem = xemu_exec(lib, code, st, mem)
     uout, umem = uc_run(code, st, mem)
     if xout.rip != uout.rip:
@@ -293,11 +303,36 @@ TEMPLATES = [
     "rep lodsb", "rep lodsq", "repe cmpsb", "repne scasb",
     "sete %cl", "setne %cl", "setl %cl", "setg %cl",
     "cmove {r1}, {r2}", "cmovne {r1}, {r2}",
+    # Bit ops with a *memory* destination and offsets that cross elements.
+    "btq %rcx, 0x30(%r14)", "btsq %rcx, 0x30(%r14)",
+    "btrq %rcx, 0x30(%r14)", "btcq %rcx, 0x30(%r14)",
+    "btl %ecx, 0x30(%r14)", "btsl %ecx, 0x30(%r14)",
+    "btw %cx, 0x30(%r14)", "btsw %cx, 0x30(%r14)",
+    "btsq $42, 0x30(%r14)", "btcq $62, 0x30(%r14)", "btrq $1, 0x30(%r14)",
+    # Legacy high-byte registers (AH/CH/DH/BH), only valid without REX.
+    "testb $0x10, %ah", "testb $0x10, %bh",
+    "movb %ah, %cl", "movb %al, %ch", "movb %dh, %bl", "movb %bh, %dl",
+    "addb %ah, %cl", "xorb %dh, %al", "cmpb %bh, %dl",
+    "movzbl %ah, %eax", "movzbl %bh, %ecx", "movsbl %ch, %edx",
+    "incb %ah", "negb %dh", "notb %bh",
+    "shlb $3, %ah", "sarb $1, %dh",
+    # Double-precision shifts, popcount, byte swaps, non-temporal stores.
+    "shldq ${imm8}, {r1}, {r2}", "shrdq ${imm8}, {r1}, {r2}",
+    "shldl ${imm8}, {r1d}, {r2d}", "shrdl ${imm8}, {r1d}, {r2d}",
+    "shldw ${imm8}, {r1w}, {r2w}", "shrdw ${imm8}, {r1w}, {r2w}",
+    "shldq %cl, {r1}, {r2}", "shrdq %cl, {r1}, {r2}",
+    "popcntq {r1}, {r2}", "popcntl {r1d}, {r2d}", "popcntw {r1w}, {r2w}",
+    "bswapq {r1}", "bswapl {r1d}",
+    "movntiq {r1}, 0x30(%r14)", "movntil {r1d}, 0x30(%r14)",
 ]
 
 
 def fill(asm, rng):
     r1 = rng.choice(GPRS); r2 = rng.choice([x for x in GPRS if x != r1])
+    # SHLD/SHRD results are architecturally undefined once the (5-bit masked)
+    # count exceeds the operand size, so keep the generated counts in a range
+    # that is defined for 16, 32 and 64-bit forms.
+    slice_shift = base_mn(asm) in {"shld", "shrd"}
     def reg32(r): return r.replace("r8","r8d").replace("r9","r9d").replace("r10","r10d").replace("r11","r11d").replace("r12","r12d").replace("r13","r13d").replace("rax","eax").replace("rcx","ecx").replace("rdx","edx").replace("rbx","ebx").replace("rsi","esi").replace("rdi","edi")
     def reg16(r): return r + "w" if r.startswith("r") and r[1:].isdigit() else ("a" if False else r.replace("rax","ax").replace("rcx","cx").replace("rdx","dx").replace("rbx","bx").replace("rsi","si").replace("rdi","di"))
     def reg8(r): return r + "b" if r.startswith("r") and r[1:].isdigit() else r.replace("rax","al").replace("rcx","cl").replace("rdx","dl").replace("rbx","bl").replace("rsi","sil").replace("rdi","dil")
@@ -305,7 +340,8 @@ def fill(asm, rng):
                       r1d="%"+reg32(r1), r2d="%"+reg32(r2),
                       r1w="%"+reg16(r1), r2w="%"+reg16(r2),
                       r1b="%"+reg8(r1), r2b="%"+reg8(r2),
-                      imm8=rng.randrange(-128, 128), imm64=rng.getrandbits(63),
+                      imm8=(rng.randrange(1, 16) if slice_shift else rng.randrange(-128, 128)),
+                      imm64=rng.getrandbits(63),
                       mem=MEM)
 
 

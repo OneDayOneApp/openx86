@@ -1,4 +1,5 @@
 #include "xemu.h"
+#include "ops.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -41,8 +42,12 @@ int main(int argc, char **argv) {
     if (rc == 0 && d.simd != simd) { bad_simd++; bad = 1; }
     if (rc == 0 && d.opsz != sz) { bad_sz++; bad = 1; }
     if (rc == 0 && d.memsz != msz) { bad_msz++; bad = 1; }
-    if (rc == 0 && (d.a_kind != ak || d.a_idx != ai)) { bad_a++; bad = 1; }
-    if (rc == 0 && (d.b_kind != bk || d.b_idx != bi)) { bad_b++; bad = 1; }
+    /* The register index of an immediate operand is a don't-care: the RTL
+       leaves the byte it read as ModRM in b_idx for the accumulator-immediate
+       forms (e.g. "subb $0x11,%al" reports b_idx=1), XEMU reports 0. Compare
+       the index only for register/memory operands. */
+    if (rc == 0 && (d.a_kind != ak || (d.a_kind != XK_IMM && d.a_idx != ai))) { bad_a++; bad = 1; }
+    if (rc == 0 && (d.b_kind != bk || (d.b_kind != XK_IMM && d.b_idx != bi))) { bad_b++; bad = 1; }
     if (rc == 0 && d.imm != imm) { bad_imm++; bad = 1; }
     if (rc == 0 && (unsigned)d.base != base) { bad_base++; bad = 1; }
     if (rc == 0 && (unsigned)d.index != idx) { bad_idx++; bad = 1; }
