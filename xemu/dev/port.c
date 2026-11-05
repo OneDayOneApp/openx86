@@ -4,6 +4,8 @@
 #include <stdio.h>
 
 int xemu_console_serial = 1;
+int xemu_trace_port = 0;
+uint64_t xemu_port_out_count = 0;
 
 int xemu_port_in(uint32_t port, int size, uint64_t *val) {
   if (port >= XEMU_PORT_UART && port <= XEMU_PORT_UART + 7) {
@@ -24,6 +26,11 @@ int xemu_port_in(uint32_t port, int size, uint64_t *val) {
 }
 
 int xemu_port_out(uint32_t port, int size, uint64_t val) {
+  xemu_port_out_count++;
+  if (xemu_trace_port)
+    fprintf(stderr, "[port] out %u, 0x%llx (%d bits) rip=0x%llx\n",
+            port, (unsigned long long)val, size * 8,
+            (unsigned long long)xemu.rip);
   if (port >= XEMU_PORT_UART && port <= XEMU_PORT_UART + 7) {
     return xemu_uart_out(port - XEMU_PORT_UART, size, val);
   }

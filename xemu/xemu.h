@@ -133,6 +133,8 @@ uint16_t xemu_fpu_tag(void);
 /* Effective address of the ModRM memory operand (mem.c). */
 uint64_t xemu_ea(const XemuInst *d);
 extern int xemu_console_serial;
+extern int xemu_trace_port;
+extern uint64_t xemu_port_out_count;
 extern uint64_t xemu_fault_err;
 extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;

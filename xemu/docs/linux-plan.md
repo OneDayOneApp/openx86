@@ -120,8 +120,28 @@ make XEMU_MEM_MB=512 xemu-bin
 | 段覆盖 | `FS`/`GS` 参与有效地址计算；`WRMSR` 支持 FS/GS/kernel-GS base |
 | `MOV sreg`/`RETF`/`LEAVE`/`ENTER` | 内核早期切换与函数序言的必需项 |
 
-当前卡点：内核执行到 `native_write_cr0` 后触发 `UD2`，
-原因是 per-CPU 的 `GS` 基址还没建立（`setup_per_cpu_areas` 之前就访问了）。
+当前卡点：内核走完早期初始化并进入 `default_idle`，但**没有任何 console 输出**
+（0 次端口写、VGA 缓冲区全空、e820/boot_params 已确认正确）。
+说明输出通道在 `console_init` 之前就缺失，或内核在静默 panic。
+
+已修复（相对上一版）：
+
+| 问题 | 影响 |
+| --- | --- |
+| ELF 路径没写 boot_params | 只设了 `%rsi`，内核读到空 e820 表 |
+| IDT 用物理读 | 开页后 IDT 读取失败，异常无法投递 |
+| RIP 相对操作数忽略段基址 | `mov %rax,%gs:disp(%rip)` 算错地址 |
+
+## 下一步定位手段
+
+`xemu` 新增三个诊断开关，用于确认内核执行到哪个阶段：
+
+```bash
+./build/xemu --kernel vmlinux -b --max-steps=N \
+  --watch-pc=ffffffff81a00000-ffffffff81b00000   # 命中区间第一行
+  --trace-cr                                     # 每次 CR 读写
+  --trace-port                                   # 每次端口写
+```
 
 ## L2 — x87 与上下文切换（1–1.5 周）
 
