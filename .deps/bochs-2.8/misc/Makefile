@@ -1,0 +1,53 @@
+# Copyright (C) 2001-2013  The Bochs Project
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+
+
+.SUFFIXES: .cc
+
+
+top_builddir = ..
+
+SHELL = /bin/sh
+
+
+
+CC = gcc
+CXX = /opt/homebrew/opt/llvm/bin/clang++
+CFLAGS =  -fpascal-strings -fno-common -Wno-four-char-constants -Wno-unknown-pragmas -Dmacintosh -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES  
+CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -fpascal-strings -fno-common -Wno-four-char-constants -Wno-unknown-pragmas -Dmacintosh -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES  
+CPPFLAGS = -I/opt/homebrew/opt/llvm/include -fpascal-strings -fno-common -Wno-four-char-constants -Wno-unknown-pragmas -Dmacintosh -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES
+
+LDFLAGS = -L/opt/homebrew/opt/llvm/lib
+LIBS = 
+RANLIB = ranlib
+LIBTOOL=$(SHELL) $(top_builddir)/libtool
+
+
+.cc.o:
+	$(CXX) -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+
+all: make_cmos_image
+
+make_cmos_image: make_cmos_image.o
+	$(LIBTOOL) --mode=link --tag CXX $(CXX) -o $@ $(CXXFLAGS_CONSOLE) $(LDFLAGS) make_cmos_image.o
+
+clean:
+	rm -f  *.o
+	rm -f  make_cmos_image
+
+dist-clean: clean
+	rm -f  Makefile

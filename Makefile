@@ -75,6 +75,37 @@ xemu-sys-test: xemu-bin
 
 xemu-all-test: xemu-so xemu-bin isa-diff xemu-sys-test sys-lockstep-test emu-test
 
+# --- Bochs golden reference (independent interpreter) ---------------------
+BOCHS_VER := 2.8
+BOCHS_DIR := .deps/bochs-$(BOCHS_VER)
+BOCHS_BIN := $(BOCHS_DIR)/bochs
+
+$(BOCHS_BIN):
+	@mkdir -p .deps
+	cd .deps && curl -sL -o bochs-$(BOCHS_VER).tar.gz \
+	  https://downloads.sourceforge.net/project/bochs/bochs/$(BOCHS_VER)/bochs-$(BOCHS_VER).tar.gz
+	cd .deps && tar xzf bochs-$(BOCHS_VER).tar.gz
+	cd $(BOCHS_DIR) && ./configure --enable-debugger --with-sdl=no --with-x=no \
+	  --with-win32=no --with-rfb=no --with-vncsrv=no --with-nogui \
+	  --enable-cpu-level=6 --enable-x86-64
+	$(MAKE) -C $(BOCHS_DIR) -j4
+
+bochs-build: $(BOCHS_BIN)
+
+build/bochs/boot.bin: tools/bochs/boot.S
+	@mkdir -p build/bochs
+	/opt/homebrew/opt/llvm/bin/clang --target=i386-none-elf -c $< -o build/bochs/boot.o
+	/opt/homebrew/opt/llvm/bin/llvm-objcopy -O binary build/bochs/boot.o $@
+
+build/bochs/floppy.img: build/bochs/boot.bin
+	python3 -c "import pathlib; b=pathlib.Path('build/bochs/boot.bin').read_bytes(); \
+	  pathlib.Path('build/bochs/floppy.img').write_bytes(bytes(b[:512])+b'\x00'*(1474560-512))"
+
+bochs-img: build/bochs/floppy.img
+
+bochs-test: bochs-build bochs-img xemu-so
+	python3 tools/bochs/difftest.py $$(ls build/tests/t*.bin)
+
 sys-diff-test: core-sim xemu-so
 	python3 tools/sysrun.py tests/system/t22_cr.S --diff
 	python3 tools/sysrun.py tests/system/t23_paging.S --diff
