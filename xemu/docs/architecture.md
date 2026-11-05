@@ -67,7 +67,7 @@ XEMU 是 openx86 项目自研的 x86-64 参考模型（reference model）。
 | L4 | `dev/pit.c` | 124 | 8254 通道 0，模式 0/2/3，锁存读，计满触发 IRQ0 |
 | L3 | `exec.c` | 1185 | 指令语义总入口、标志位、乘除移位、串操作、控制转移、段/特权、端口、MSR/CPUID |
 | L3 | `sse.c` | 463 | SSE/SSE2（整数 SIMD、浮点、搬移、转换） |
-| L3 | `fpu.c` | 376 | x87 栈机、控制/状态字、`FXSAVE`/`FXRSTOR`、`MXCSR` |
+| L3 | `fpu.c` | ~520 | x87 栈机、D8–DF 全寄存器形式、超越函数、`FCOMI` 族、`FXSAVE`/`FXRSTOR`、`MXCSR` |
 | L2 | `decode.c` | 1146 | 表驱动解码：前缀、REX、ModRM/SIB、组扩展、三代 Opcode Map |
 | L2 | `ops.h` | 188 | 统一 op 编号（与 RTL 对齐） |
 | L1 | `mem.c` | 404 | 物理内存 + MMIO、4 级页表遍历 + TLB、异常投递与栈帧、GDT/TSS 读取 |
@@ -277,7 +277,9 @@ make xemu-all-test      → 以上 XEMU 套件合并
 | `HLT` | 不终止模拟，仅置 `halted_cpu` | 内核 idle 循环会执行 `HLT` |
 | x87 精度 | 用 `long double` 承载，写回时显式舍入到 80 位 | AArch64 上 `long double` 是 binary128，精度足够 |
 | 指令缓存 | 无，`CLFLUSH`/`PREFETCH` 空操作 | 单核解释执行，无自修改码场景 |
-| 设备 | 无 ACPI / PCI / APIC | 单核最小系统；串口枚举因此尚未打通 |
+| 设备 | 无 ACPI / ACPI 表、无 APIC | 单核最小系统；串口靠 `console=ttyS0` 显式指定 |
+| x87 超越函数 | `FSIN`/`FCOS`/`FPTAN`/`F2XM1` 等用宿主 `libm` 计算 | 结果与真机可能在末位有差异，足够跑用户态 |
+| x87 精度控制 | 不模拟 PC 字段引起的逐步舍入 | 单精度运算在 double 路径上完成 |
 
 ---
 
@@ -288,5 +290,6 @@ make xemu-all-test      → 以上 XEMU 套件合并
 | L4 | 无 ACPI SPCR / PNP，8250 依赖 `earlyprintk`/`console=ttyS0` 显式声明 | ✅ 已解决：earlycon 与 ttyS0 console 都能工作 |
 | L4 | 16550 发送中断（THRE） | ✅ 已实现：`write(2)` 到 `/dev/console` 可完整输出 |
 | L3 | `rep` 串操作中途缺页 | ✅ `copy_bootdata` 路径已打通（异常帧改虚拟写） |
-| L3 | `SYSENTER/SYSEXIT` 未实现（CPUID 已如实不声明） | 仅影响 32 位快速系统调用 |
+| L3 | `SYSENTER/SYSEXIT` 已实现（CPUID 声明 SEP） | — |
+| L3 | x87 寄存器形式（D9–DF, mod=3） | ✅ 已修复：T86 覆盖 16 项，见 CHANGELOG |
 | L1 | 页表修改依赖显式 `invlpg`/`cr3` 刷新，无页结构缓存建模 | 若客户机依赖未失效的旧项会与真机不同 |

@@ -41,8 +41,15 @@ void xemu_fpu_reset(void) {
   fpu.top = 0;
 }
 
+/* Status word as the guest sees it: C0..C3 live in fpu.sw, but TOP (bits
+ * 13:11) is tracked separately as fpu.top and has to be folded in here.
+ * Without this FNSTSW/FSTSW reported TOP = 0 after every push/pop. */
+static uint16_t sw_arch(void) {
+  return (uint16_t)((fpu.sw & ~0x3800) | ((uint16_t)(fpu.top & 7) << 11));
+}
+
 uint16_t xemu_fpu_cw(void) { return fpu.cw; }
-uint16_t xemu_fpu_sw(void) { return fpu.sw; }
+uint16_t xemu_fpu_sw(void) { return sw_arch(); }
 uint16_t xemu_fpu_tag(void) { return fpu.tag; }
 
 static long double *st(int i) { return &fpu.st[(fpu.top + i) & 7]; }
@@ -251,8 +258,11 @@ int xemu_fpu_exec(const XemuInst *d) {
       xemu_vwrite(ea, &fpu.cw, 2);
       return 0;
     case Ops_FNSTSW:
-      if (d->a_kind == XK_GPR) xemu.gpr[0] = (xemu.gpr[0] & ~0xffffull) | fpu.sw;
-      else xemu_vwrite(ea, &fpu.sw, 2);
+      {
+        uint16_t sw = sw_arch();
+        if (d->a_kind == XK_GPR) xemu.gpr[0] = (xemu.gpr[0] & ~0xffffull) | sw;
+        else xemu_vwrite(ea, &sw, 2);
+      }
       return 0;
     case Ops_FLDCW:
       xemu_vread(ea, &fpu.cw, 2);
@@ -311,6 +321,11 @@ int xemu_fpu_exec(const XemuInst *d) {
     case Ops_FADD: case Ops_FSUB: case Ops_FMUL: case Ops_FDIV:
     case Ops_FADDP: case Ops_FSUBP: case Ops_FMULP: case Ops_FDIVP:
     case Ops_FSUBR: case Ops_FDIVR: case Ops_FSUBRP: case Ops_FDIVRP: {
+      /* `a` is ST(0) (the source operand) and `b` is ST(i) or the memory
+         operand (the destination for the "P" forms).  The non-reversed
+         operations compute DEST - SRC, the reversed ones SRC - DEST; for the
+         register forms DEST is ST(i), so the arithmetic has to be expressed
+         in terms of b and a respectively. */
       int rev = (d->op == Ops_FSUBR || d->op == Ops_FDIVR ||
                  d->op == Ops_FSUBRP || d->op == Ops_FDIVRP);
       int pop_after = (d->op == Ops_FADDP || d->op == Ops_FSUBP ||
@@ -320,17 +335,31 @@ int xemu_fpu_exec(const XemuInst *d) {
               ? ((sz == 4) ? load_m32(ea) : load_m64(ea))
               : *st(d->b_idx & 7);
       a = *st(0);
-      long double x = rev ? b : a;
-      long double y = rev ? a : b;
+      /* The two-operand register/memory forms write the result to ST(0);
+         the "P" (pop) forms write it to ST(1) and then pop, which makes ST(1)
+         the destination.  Writing the P forms to ST(0) as well left the
+         result one slot too high and then dropped it, so the stack quietly
+         lost one entry per operation. */
+      /* The two-operand forms write ST(0); the "P" forms write ST(1) and
+         then pop, making ST(1) the destination.  Resolve the destination to a
+         physical slot BEFORE popping: st(i) is an offset from fpu.top, so a
+         pointer taken now would follow the stack pointer and land on the
+         wrong register. */
+      int dst_slot = (fpu.top + (pop_after ? 1 : 0)) & 7;
+      /* SDM: FADD/FSUB/FMUL/FDIV compute ST(0) <op> ST(i); the reversed
+         forms (FSUBR/FDIVR) swap the operands.  The "P" variants store into
+         ST(1) and pop, but use the same operand order. */
+      long double r = 0;
       switch (d->op) {
-        case Ops_FADD: case Ops_FADDP: *st(0) = narrow(x + y); break;
-        case Ops_FSUB: case Ops_FSUBP: *st(0) = narrow(x - y); break;
-        case Ops_FSUBR: case Ops_FSUBRP: *st(0) = narrow(y - x); break;
-        case Ops_FMUL: case Ops_FMULP: *st(0) = narrow(x * y); break;
-        case Ops_FDIV: case Ops_FDIVP: *st(0) = narrow(x / y); break;
-        case Ops_FDIVR: case Ops_FDIVRP: *st(0) = narrow(y / x); break;
+        case Ops_FADD: case Ops_FADDP: r = a + b; break;
+        case Ops_FSUB: case Ops_FSUBP: r = b - a; break;   /* DEST - SRC */
+        case Ops_FSUBR: case Ops_FSUBRP: r = a - b; break; /* SRC - DEST */
+        case Ops_FMUL: case Ops_FMULP: r = a * b; break;
+        case Ops_FDIV: case Ops_FDIVP: r = b / a; break;   /* DEST / SRC */
+        case Ops_FDIVR: case Ops_FDIVRP: r = a / b; break; /* SRC / DEST */
         default: break;
       }
+      fpu.st[dst_slot] = narrow(r);
       if (pop_after) pop();
       return 0;
     }
@@ -342,15 +371,42 @@ int xemu_fpu_exec(const XemuInst *d) {
       if (d->op == Ops_FCOMP || d->op == Ops_FUCOMP) pop();
       if (d->op == Ops_FCOMPP) { pop(); pop(); }
       return 0;
+    /* FCOMI/FUCOMI and the popping FCOMIP/FUCOMIP: compare ST(0) with ST(i)
+       and put the result in EFLAGS (ZF/PF/CF) instead of only in the x87
+       status word.  Intel documents them as "unordered" (FUCOMI) or signalling
+       (FCOMI) on QNaN; a single-threaded model with no exceptions pending
+       treats both the same apart from the unordered flag ordering. */
+    case Ops_FCOMI: case Ops_FCOMIP: case Ops_FUCOMI: case Ops_FUCOMIP: {
+      b = *st(d->b_idx & 7);
+      a = *st(0);
+      int c3, c2, c0;
+      if (isnan(a) || isnan(b)) { c3 = 1; c2 = 1; c0 = 1; }   /* unordered */
+      else if (a > b)           { c3 = 0; c2 = 0; c0 = 0; }   /* greater   */
+      else if (a < b)           { c3 = 0; c2 = 0; c0 = 1; }   /* less      */
+      else                      { c3 = 1; c2 = 0; c0 = 0; }   /* equal     */
+      set_cc(c0, 0, c2, c3);
+      xemu.rflags &= ~(0x1 | 0x4 | 0x40 | 0x80);   /* CF PF AF ZF */
+      if (c0) xemu.rflags |= 0x1;                  /* CF */
+      if (c2) xemu.rflags |= 0x4;                  /* PF */
+      if (c3) xemu.rflags |= 0x40;                 /* ZF */
+      if (d->op == Ops_FCOMIP || d->op == Ops_FUCOMIP) pop();
+      return 0;
+    }
     case Ops_FTST:
       compare(0.0L, 1);
       return 0;
     case Ops_FXAM: {
+      /* SDM classification table.  C1 carries the sign, C0/C2/C3 the class:
+           unsupported 0 0 0 | NaN 0 0 1 | normal 0 1 0 | infinity 0 1 1
+           zero        1 0 0 | empty 1 0 1 | denormal 1 1 0   (C3 C2 C0) */
       long double v = *st(0);
-      if (isnan(v)) set_cc(0, 0, 0, 1);
-      else if (isinf((double)v)) set_cc(0, 1, 1, 1);
-      else if (v == 0.0L) set_cc(0, 0, 0, 0);
-      else set_cc(0, 1, 0, signbit(v) ? 1 : 0);
+      int sign = signbit(v) ? 1 : 0;
+      if (is_empty(0))                       set_cc(1, sign, 0, 1);
+      else if (isnan(v))                     set_cc(1, sign, 0, 0);
+      else if (isinf(v))                     set_cc(1, sign, 1, 0);
+      else if (v == 0.0L)                    set_cc(0, sign, 0, 1);
+      else if (fpclassify(v) == FP_SUBNORMAL) set_cc(0, sign, 1, 1);
+      else                                   set_cc(0, sign, 1, 0);
       return 0;
     }
     case Ops_FCHS: *st(0) = -*st(0); return 0;
@@ -370,6 +426,115 @@ int xemu_fpu_exec(const XemuInst *d) {
     case Ops_FLDLG2: push(narrow(0.301029995663981195213738894724493027L)); return 0;
     case Ops_FLDLN2: push(narrow(0.693147180559945309417232121458176568L)); return 0;
     case Ops_FNOP: return 0;
+
+    /* ---- condition-code dependent moves (FCMOVcc) -------------------- */
+    /* The x87 stores its comparison result as C0/C2/C3 in the status word;
+       the FCMOVcc encodings name the same bits, so test the status word
+       directly. */
+    case Ops_FCMOVB:  case Ops_FCMOVNB:
+    case Ops_FCMOVE:  case Ops_FCMOVNE:
+    case Ops_FCMOVBE: case Ops_FCMOVNBE:
+    case Ops_FCMOVU:  case Ops_FCMOVNU: {
+      int c0 = (fpu.sw >> 8) & 1, c2 = (fpu.sw >> 10) & 1, c3 = (fpu.sw >> 14) & 1;
+      int take;
+      switch (d->op) {
+        case Ops_FCMOVB:  take = c0; break;              /* CF = 1 */
+        case Ops_FCMOVNB: take = !c0; break;
+        case Ops_FCMOVE:  take = c3; break;              /* ZF = 1 */
+        case Ops_FCMOVNE: take = !c3; break;
+        case Ops_FCMOVBE: take = c0 || c3; break;        /* CF or ZF */
+        case Ops_FCMOVNBE: take = !(c0 || c3); break;
+        case Ops_FCMOVU:  take = c2; break;              /* PF = 1 (unordered) */
+        default:          take = !c2; break;             /* FCMOVNU */
+      }
+      if (take) *st(0) = *st(d->b_idx & 7);
+      return 0;
+    }
+
+    /* ---- transcendental and rounding --------------------------------- */
+    case Ops_F2XM1: *st(0) = narrow(powl(2.0L, *st(0)) - 1.0L); return 0;
+    case Ops_FYL2X: {
+      long double y = *st(1), x = *st(0);
+      long double r = y * log2l(x);
+      st(1)[0] = narrow(r);
+      pop();
+      return 0;
+    }
+    case Ops_FYL2XP1: {
+      long double y = *st(1), x = *st(0);
+      long double r = y * log2l(x + 1.0L);
+      st(1)[0] = narrow(r);
+      pop();
+      return 0;
+    }
+    case Ops_FPATAN: {
+      long double y = *st(1), x = *st(0);
+      long double r = atan2l(y, x);
+      st(1)[0] = narrow(r);
+      pop();
+      return 0;
+    }
+    case Ops_FPTAN: {
+      long double r = tanl(*st(0));
+      *st(0) = narrow(r);
+      push(1.0L);
+      return 0;
+    }
+    case Ops_FSIN: *st(0) = narrow(sinl(*st(0))); return 0;
+    case Ops_FCOS: *st(0) = narrow(cosl(*st(0))); return 0;
+    case Ops_FSINCOS: {
+      long double v = *st(0);
+      *st(0) = narrow(sinl(v));
+      push(narrow(cosl(v)));
+      return 0;
+    }
+    case Ops_FRNDINT: {
+      long double a0 = *st(0);
+      long double r = (fpu.cw & 0x0c00) == 0x0c00 ? truncl(a0)
+                    : (fpu.cw & 0x0c00) == 0x0800 ? ceill(a0)
+                    : (fpu.cw & 0x0c00) == 0x0400 ? floorl(a0)
+                                                  : roundl(a0);
+      *st(0) = narrow(r);
+      return 0;
+    }
+    case Ops_FSCALE: {
+      long double y = *st(0), x = *st(1);
+      /* FSCALE truncates the scale factor toward zero. */
+      long double r = scalbnl(y, (int)truncl(x));
+      *st(0) = narrow(r);
+      return 0;
+    }
+    case Ops_FPREM: case Ops_FPREM1: {
+      /* Both compute partial remainders; the exact reconstruction of the
+         quotient bits (C2/C1/C0) is not modelled -- a single pass with the
+         exact IEEE remainder is enough for the Linux userspace this runs. */
+      long double x = *st(0), y = *st(1);
+      long double r = remainderl(x, y);
+      st(0)[0] = narrow(r);
+      set_cc(0, 0, 0, 0);
+      return 0;
+    }
+    case Ops_FXTRACT: {
+      long double v = *st(0);
+      int e = 0;
+      long double m = frexpl(v, &e);     /* v = m * 2^e, 0.5 <= |m| < 1 */
+      /* x87 returns the significand scaled to [1,2) and the exponent. */
+      *st(0) = narrow(m * 2.0L);
+      push((long double)(e - 1));
+      return 0;
+    }
+    case Ops_FDECSTP: fpu.top = (fpu.top + 1) & 7; return 0;
+    case Ops_FINCSTP: fpu.top = (fpu.top - 1) & 7; return 0;
+
+    /* FISTTP stores and pops unconditionally. */
+    case Ops_FISTTP: {
+      long double r = truncl(*st(0));
+      if (sz == 2) { int16_t v = (int16_t)r; xemu_vwrite(ea, &v, 2); }
+      else if (sz == 4) { int32_t v = (int32_t)r; xemu_vwrite(ea, &v, 4); }
+      else { int64_t v = (int64_t)r; xemu_vwrite(ea, &v, 8); }
+      pop();
+      return 0;
+    }
     default:
       return -1;
   }

@@ -165,13 +165,23 @@ enum {
   Ops_FTST, Ops_FXAM, Ops_FCHS, Ops_FABS, Ops_FSQRT, Ops_FXCH, Ops_FFREE,
   Ops_FLD1, Ops_FLDZ, Ops_FLDPI, Ops_FLDL2E, Ops_FLDL2T, Ops_FLDLG2,
   Ops_FLDLN2, Ops_FNOP,
-  /* NOTE: the x87 block above runs 160..204. These used to start at 168 and
-     therefore silently aliased FST/FSTP/FILD/... — FXSAVE decoded to FST, and
-     the `op >= Ops_FNINIT && op <= Ops_FNOP` dispatch in exec.c swallowed any
-     new opcode numbered 178..204. Keep this block above Ops_FNOP. */
-  Ops_FXSAVE = 205, Ops_FXRSTOR, Ops_CLFLUSH, Ops_LDMXCSR, Ops_STMXCSR,
+  /* Register-form x87 operations.  These must live between Ops_FNINIT and
+     Ops_FXSAVE because exec.c dispatches x87 with a single range test
+     (`op >= Ops_FNINIT && op < Ops_FXSAVE`).  decode.c has a _Static_assert
+     that keeps Ops_FXSAVE above this block. */
+  Ops_FUCOMIP, Ops_FCOMIP, Ops_FCMOVB, Ops_FCMOVE, Ops_FCMOVBE, Ops_FCMOVU,
+  Ops_FCMOVNB, Ops_FCMOVNE, Ops_FCMOVNBE, Ops_FCMOVNU, Ops_FUCOMI, Ops_FCOMI,
+  Ops_FISTTP, Ops_FXTRACT, Ops_F2XM1, Ops_FYL2X, Ops_FPATAN, Ops_FPTAN,
+  Ops_FSINCOS, Ops_FRNDINT, Ops_FSCALE, Ops_FPREM, Ops_FPREM1, Ops_FYL2XP1,
+  Ops_FSIN, Ops_FCOS, Ops_FDECSTP, Ops_FINCSTP,
+  /* NOTE: the x87 block above runs 160..205.  Ops_FXSAVE is pinned to 260 so
+     the x87 range test in exec.c (`op >= Ops_FNINIT && op < Ops_FXSAVE`) has
+     room for the register-form operations appended after Ops_FNOP.  Without
+     the explicit value the new opcodes flowed into the FXSAVE block and every
+     DF-group instruction decoded as FXSAVE/FXRSTOR. */
+  Ops_FXSAVE = 260, Ops_FXRSTOR, Ops_CLFLUSH, Ops_LDMXCSR, Ops_STMXCSR,
   Ops_LFENCE, Ops_MFENCE, Ops_SFENCE, Ops_PREFETCH,
-  Ops_MOV_DR = 214,
+  Ops_MOV_DR,
   /* System/legacy expansion implemented in XEMU only (the RTL subset core
      does not model them). Must stay outside 160..204 (x87 dispatch). */
   Ops_SGDT = 300, Ops_SIDT, Ops_SMSW, Ops_LMSW, Ops_SLDT, Ops_STR,

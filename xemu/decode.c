@@ -9,9 +9,16 @@ enum { IMM_NONE = 0, IMM_8 = 1, IMM_Z = 2, IMM_32 = 3, IMM_64 = 4, IMM_16 = 5 };
 /* Decode forms (mirror DecodeForm). */
 enum { FORM_NORMAL = 0, FORM_MOVZX8 = 1, FORM_MOVZX16 = 2, FORM_MOVSX8 = 3,
        FORM_MOVSX16 = 4, FORM_MOVSXD = 5, FORM_ACC = 6, FORM_SPECIAL = 7 };
-/* Opcode groups (mirror OpcodeGroup). */
+/* Opcode groups (mirror OpcodeGroup).
+ *
+ * G_X87 + n covers the x87 escapes D8..DF, so it needs eight consecutive
+ * values and must not overlap any other group.  It used to start at 8 with
+ * G_15 = 9, which made `G_15 == G_X87 + 1 == D9`: the D9 escape was routed to
+ * the 0F AE system table instead of x87_group(), so `fld st(i)` decoded as
+ * FXSAVE, `fxch st(i)` as FXRSTOR and `fchs`/`fabs`/`ftst`/`fxam` as #UD. */
 enum { G_NONE = 0, G_1 = 1, G_2 = 2, G_3 = 3, G_4 = 4, G_5 = 5, G_11 = 6, G_1A = 7,
-       G_X87 = 8, G_15 = 9 };   /* G_X87 + n for opcodes D8+n */
+       G_15 = 8,
+       G_X87 = 9 };             /* G_X87 + n for opcodes D8+n */
 /* SIMD kinds (mirror SimdKind). */
 enum { SIMD_NONE = 0, SIMD_SS = 1, SIMD_SD = 2, SIMD_PS = 3, SIMD_PD = 4, SIMD_DQ = 5 };
 
@@ -21,6 +28,11 @@ typedef struct {
      300), and a truncated value silently aliases a different instruction. */
   uint16_t op;
   uint8_t modrm, imm, dir, group, force8, form, sse_sel, store;
+  /* ST(i) operand for x87 register forms (mod == 3).  Kept out of `imm`,
+     which is the *immediate encoding* field: storing an ST index there made
+     the decoder add an immediate byte to the instruction length. */
+  uint8_t st_idx;
+  uint8_t has_st;
 } DInfo;
 
 /* Row index is `group - 1`, so G_15 (9) addresses row 8: nine rows, not
@@ -32,6 +44,15 @@ static int tables_ready;
 #define DI(opv, ...) ((DInfo){ .op = (opv), __VA_ARGS__ })
 
 static void set(DInfo *t, int i, DInfo d) { t[i] = d; }
+
+/* exec.c dispatches x87 with `op >= Ops_FNINIT && op < Ops_FXSAVE`.  If a
+ * future opcode insertion moves the last x87 op past Ops_FXSAVE (or moves
+ * Ops_FXSAVE down into the block) the register forms silently stop being
+ * executed, which is exactly the class of bug this file just fixed. */
+_Static_assert(Ops_FINCSTP < Ops_FXSAVE,
+               "the last x87 opcode must stay below Ops_FXSAVE");
+_Static_assert(Ops_FNINIT < Ops_FNOP,
+               "the x87 block must be ordered");
 
 static void init_tables(void) {
   if (tables_ready) return;
@@ -353,15 +374,33 @@ static DInfo x87r(uint8_t op, int idx) {
   d.op = op;
   d.modrm = 1;
   d.form = 0;                   /* register form */
-  d.imm = (uint8_t)idx;         /* b_idx is filled from rm later */
+  d.st_idx = (uint8_t)(idx & 7);
+  d.has_st = 1;
   return d;
 }
 
+/* x87 escape groups D8..DF.
+ *
+ * ModRM semantics differ sharply between the two forms:
+ *
+ *   memory operand (mod != 3):  the REG field selects the operation and the
+ *                               r/m field is the address.
+ *   register operand (mod == 3): the REG field selects the operation and the
+ *                               r/m field picks ST(i) -- with a few notable
+ *                               exceptions (D9/D8/DA/DE arithmetic read the
+ *                               destination ST(i) from rm as well).
+ *
+ * The register branch used to switch on `rm` and pass `reg` as the ST index,
+ * which is exactly backwards: it decoded `fld st(i)` as FXSAVE, `fxch st(i)`
+ * as FXRSTOR, `fchs`/`fabs`/`ftst`/`fxam` as #UD, and silently turned the
+ * whole DA..DF register space into NOPs. */
 static DInfo x87_group(int esc, int reg, int mod, int rm) {
   int is_reg = (mod == 3);
-  switch (esc) {
-    case 0:  /* D8: m32real arithmetic / ST(i) forms */
-      if (!is_reg) {
+
+  /* ---- memory forms: the REG field is the operation ------------------ */
+  if (!is_reg) {
+    switch (esc) {
+      case 0:  /* D8: m32real */
         switch (reg) {
           case 0: return x87m(Ops_FADD, 4);
           case 1: return x87m(Ops_FMUL, 4);
@@ -372,7 +411,91 @@ static DInfo x87_group(int esc, int reg, int mod, int rm) {
           case 6: return x87m(Ops_FDIV, 4);
           case 7: return x87m(Ops_FDIVR, 4);
         }
-      }
+        break;
+      case 1:  /* D9: m32real loads/stores and the control words */
+        switch (reg) {
+          case 0: return x87m(Ops_FLD, 4);
+          case 2: return x87m(Ops_FST, 4);
+          case 3: return x87m(Ops_FSTP, 4);
+          case 4: return x87m(Ops_FNSTENV, 4);
+          case 5: return x87m(Ops_FLDCW, 4);
+          case 6: return x87m(Ops_FNSTCW, 4);
+          case 7: return x87m(Ops_FNSTSW, 4);
+        }
+        break;
+      case 2:  /* DA: m32int */
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 4);
+          case 1: return x87m(Ops_FISTTP, 4);
+          case 2: return x87m(Ops_FIST, 4);
+          case 3: return x87m(Ops_FISTP, 4);
+          case 5: return x87m(Ops_FLD, 10);      /* FLD m80real */
+          case 7: return x87m(Ops_FSTP, 10);
+        }
+        break;
+      case 3:  /* DB: m32int / m80real */
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 4);
+          case 1: return x87m(Ops_FISTTP, 4);
+          case 2: return x87m(Ops_FIST, 4);
+          case 3: return x87m(Ops_FISTP, 4);
+          case 5: return x87m(Ops_FLD, 10);
+          case 7: return x87m(Ops_FSTP, 10);
+        }
+        break;
+      case 4:  /* DC: m64real */
+        switch (reg) {
+          case 0: return x87m(Ops_FADD, 8);
+          case 1: return x87m(Ops_FMUL, 8);
+          case 2: return x87m(Ops_FCOM, 8);
+          case 3: return x87m(Ops_FCOMP, 8);
+          case 4: return x87m(Ops_FSUB, 8);
+          case 5: return x87m(Ops_FSUBR, 8);
+          case 6: return x87m(Ops_FDIV, 8);
+          case 7: return x87m(Ops_FDIVR, 8);
+        }
+        break;
+      case 5:  /* DD: m64real / m64int */
+        switch (reg) {
+          case 0: return x87m(Ops_FLD, 8);
+          case 1: return x87m(Ops_FISTTP, 8);
+          case 2: return x87m(Ops_FST, 8);
+          case 3: return x87m(Ops_FSTP, 8);
+          case 4: return x87m(Ops_FNSAVE, 8);
+          case 6: return x87m(Ops_FNSTSW, 8);
+          case 7: return x87m(Ops_FNSTSW, 8);
+        }
+        break;
+      case 6:  /* DE: m16int */
+        switch (reg) {
+          case 0: return x87m(Ops_FADD, 2);
+          case 1: return x87m(Ops_FMUL, 2);
+          case 2: return x87m(Ops_FCOM, 2);
+          case 3: return x87m(Ops_FCOMP, 2);
+          case 4: return x87m(Ops_FSUB, 2);
+          case 5: return x87m(Ops_FSUBR, 2);
+          case 6: return x87m(Ops_FDIV, 2);
+          case 7: return x87m(Ops_FDIVR, 2);
+        }
+        break;
+      case 7:  /* DF: m16int / m64int */
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 2);
+          case 1: return x87m(Ops_FISTTP, 2);
+          case 2: return x87m(Ops_FIST, 2);
+          case 3: return x87m(Ops_FISTP, 2);
+          case 5: return x87m(Ops_FILD, 8);
+          case 7: return x87m(Ops_FISTP, 8);
+        }
+        break;
+      default: break;
+    }
+    return (DInfo){0};
+  }
+
+  /* ---- register forms: REG is the operation, rm is ST(i) ------------- */
+  switch (esc) {
+    case 0:  /* D8 C0..DF: FADD/FMUL/FCOM/FCOMP/FSUB/FSUBR/FDIV/FDIVR ST(0),ST(i) */
       switch (reg) {
         case 0: return x87r(Ops_FADD, rm);
         case 1: return x87r(Ops_FMUL, rm);
@@ -384,179 +507,130 @@ static DInfo x87_group(int esc, int reg, int mod, int rm) {
         case 7: return x87r(Ops_FDIVR, rm);
       }
       break;
-    case 1:  /* D9 */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FLD, 4);
-          case 2: return x87m(Ops_FST, 4);
-          case 3: return x87m(Ops_FSTP, 4);
-          case 4: return x87m(Ops_FNSTENV, 4);
-          case 5: return x87m(Ops_FLDCW, 4);
-          case 6: return x87m(Ops_FNSTCW, 4);
-          case 7: return x87m(Ops_FNSTSW, 4);
-        }
-      } else {
+    case 1:  /* D9 C0..CF: FLD/FXCH, D9 D0: FNOP, D9 E0..FF: constants */
+      switch (reg) {
+        case 0: return x87r(Ops_FLD, rm);
+        case 1: return x87r(Ops_FXCH, rm);
+        case 2:
+          /* D9 D0 is FNOP; D9 D8 is FSTP ST(i) (documented as a real pop). */
+          return (rm == 0) ? x87m(Ops_FNOP, 0) : x87r(Ops_FSTP, rm);
+        case 3:
+          /* FSTP ST(i): pops either way, so treat both halves as the pop. */
+          return x87r(Ops_FSTP, rm);
+        default: break;
+      }
+      /* D9 E0..FF: the constant/transcendental block.  REG 4 and 5 hold the
+         no-operand group split by rm; REG 6 and 7 hold the transcendentals. */
+      if (reg == 4) {
         switch (rm) {
-          case 0: return x87r(Ops_FLD, reg);
-          case 1: return x87r(Ops_FXCH, reg);
-          case 2: return x87m(Ops_FNOP, 0);
-          case 3: return x87m(Ops_FNOP, 0);   /* FSTP ST(i): treat as nop */
+          case 0: return x87m(Ops_FCHS, 0);
+          case 1: return x87m(Ops_FABS, 0);
+          case 4: return x87m(Ops_FTST, 0);
+          case 5: return x87m(Ops_FXAM, 0);
           default: break;
         }
-        switch (reg) {
-          case 4: return x87m(Ops_FCHS, 0);
-          case 5: return x87m(Ops_FABS, 0);
-          case 6: return x87m(Ops_FSQRT, 0);
-          default: break;
-        }
-        if (reg == 7 && rm == 4) return x87m(Ops_FTST, 0);
-        if (reg == 7 && rm == 5) return x87m(Ops_FXAM, 0);
-        if (reg == 7 && rm >= 0 && rm <= 3) {
-          static const uint8_t c[] = {Ops_FLD1, Ops_FLDL2T, Ops_FLDL2E, Ops_FLDPI};
-          return x87m(c[rm], 0);
-        }
-        if (reg == 7 && rm == 6) return x87m(Ops_FLDLG2, 0);
-        if (reg == 7 && rm == 7) return x87m(Ops_FLDLN2, 0);
+      }
+      if (reg == 5) {
+        static const uint8_t k[8] = {Ops_FLD1, Ops_FLDL2T, Ops_FLDL2E,
+                                     Ops_FLDPI, Ops_FLDLG2, Ops_FLDLN2,
+                                     Ops_FLDZ, Ops_UNDEF};
+        if (k[rm] != Ops_UNDEF) return x87m(k[rm], 0);
+      }
+      if (reg == 6) {
+        static const uint8_t t[8] = {Ops_F2XM1, Ops_FYL2X, Ops_FPTAN,
+                                     Ops_FPATAN, Ops_FXTRACT, Ops_FPREM1,
+                                     Ops_FDECSTP, Ops_FINCSTP};
+        return x87m(t[rm], 0);
+      }
+      if (reg == 7) {
+        static const uint8_t t[8] = {Ops_FPREM, Ops_FYL2XP1, Ops_FSQRT,
+                                     Ops_FSINCOS, Ops_FRNDINT, Ops_FSCALE,
+                                     Ops_FSIN, Ops_FCOS};
+        return x87m(t[rm], 0);
       }
       break;
-    case 2:  /* DA */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FILD, 4);
-          case 2: return x87m(Ops_FIST, 4);
-          case 3: return x87m(Ops_FISTP, 4);
-          default: break;
-        }
-      } else {
-        switch (reg) {
-          case 0: return x87r(Ops_FADD, rm);
-          case 1: return x87r(Ops_FMUL, rm);
-          case 2: return x87r(Ops_FCOM, rm);
-          case 3: return x87r(Ops_FCOMP, rm);
-          case 5: return x87r(Ops_FSUBR, rm);
-          case 7: return x87r(Ops_FDIVR, rm);
-          default: break;
-        }
+    case 2:  /* DA C0..DF: FCMOVcc, DA E9: FUCOMPP */
+      if (reg == 5 && rm == 1) return x87m(Ops_FCOMPP, 0);    /* DA E9 FUCOMPP */
+      switch (reg) {
+        case 0: return x87r(Ops_FCMOVB, rm);
+        case 1: return x87r(Ops_FCMOVE, rm);
+        case 2: return x87r(Ops_FCMOVBE, rm);
+        case 3: return x87r(Ops_FCMOVU, rm);
+        default: break;
       }
       break;
-    case 3:  /* DB */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FILD, 4);
-          case 2: return x87m(Ops_FIST, 4);
-          case 3: return x87m(Ops_FISTP, 4);
-          case 5: return x87m(Ops_FLD, 10);
-          case 7: return x87m(Ops_FSTP, 10);
-          default: break;
-        }
-      } else {
-        if (reg == 4) return x87m(Ops_FNOP, 0);      /* FLDCW/FNSTENV alias */
-        if (reg == 6) return x87m(Ops_FNOP, 0);      /* FNSAVE/FNSTSW alias */
-        switch (rm) {
-          case 0: return x87m(Ops_FNOP, 0);          /* FCMOVB */
-          case 5: return x87m(Ops_FNOP, 0);          /* FUCOMI */
-          case 6: return x87m(Ops_FNOP, 0);
-          default: break;
-        }
-        switch (reg) {
-          case 0: return x87r(Ops_FADD, rm);
-          case 1: return x87r(Ops_FMUL, rm);
-          case 2: return x87r(Ops_FCOM, rm);
-          case 3: return x87r(Ops_FCOMP, rm);
-          case 5: return x87r(Ops_FSUBR, rm);
-          case 7: return x87r(Ops_FDIVR, rm);
-          default: break;
-        }
+    case 3:  /* DB C0..DF: FCMOVcc (complemented), DB E0..FF: misc */
+      switch (reg) {
+        case 0: return x87r(Ops_FCMOVNB, rm);
+        case 1: return x87r(Ops_FCMOVNE, rm);
+        case 2: return x87r(Ops_FCMOVNBE, rm);
+        case 3: return x87r(Ops_FCMOVNU, rm);
+        case 4:
+          if (rm == 0) return x87m(Ops_FNOP, 0);   /* FENI/FDISI: obsolete */
+          if (rm == 1) return x87m(Ops_FNOP, 0);   /* FDISI */
+          if (rm == 2) return x87m(Ops_FNCLEX, 0);
+          if (rm == 3) return x87m(Ops_FNINIT, 0);
+          return x87m(Ops_FNOP, 0);
+        case 5: return x87r(Ops_FUCOMI, rm);
+        case 6: return x87r(Ops_FCOMI, rm);
+        default: break;
       }
       break;
-    case 4:  /* DC: m64real */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FADD, 8);
-          case 1: return x87m(Ops_FMUL, 8);
-          case 2: return x87m(Ops_FCOM, 8);
-          case 3: return x87m(Ops_FCOMP, 8);
-          case 4: return x87m(Ops_FSUB, 8);
-          case 5: return x87m(Ops_FSUBR, 8);
-          case 6: return x87m(Ops_FDIV, 8);
-          case 7: return x87m(Ops_FDIVR, 8);
-        }
-      }
+    case 4:  /* DC C0..DF: FADD/FMUL/FCOM/FCOMP/FSUBR/FSUB/FDIVR/FDIV ST(i),ST(0) */
       switch (reg) {
         case 0: return x87r(Ops_FADD, rm);
         case 1: return x87r(Ops_FMUL, rm);
         case 2: return x87r(Ops_FCOM, rm);
         case 3: return x87r(Ops_FCOMP, rm);
         case 4: return x87r(Ops_FSUBR, rm);
-        case 5: return x87r(Ops_FSUBR, rm);
+        case 5: return x87r(Ops_FSUB, rm);
         case 6: return x87r(Ops_FDIVR, rm);
-        case 7: return x87r(Ops_FDIVR, rm);
+        case 7: return x87r(Ops_FDIV, rm);
       }
       break;
-    case 5:  /* DD */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FLD, 8);
-          case 2: return x87m(Ops_FST, 8);
-          case 3: return x87m(Ops_FSTP, 8);
-          case 4: return x87m(Ops_FNSAVE, 8);
-          case 6: return x87m(Ops_FNSTSW, 8);
-          case 7: return x87m(Ops_FNSTSW, 8);
-          default: break;
-        }
-      } else {
-        if (reg == 0) return x87m(Ops_FFREE, 0);
-        if (reg == 1) return x87m(Ops_FXCH, 0);
-        if (reg == 2) return x87m(Ops_FST, 0);
-        if (reg == 3) return x87m(Ops_FSTP, 0);
-        if (reg == 4) return x87m(Ops_FNOP, 0);   /* FUCOM */
-        if (reg == 5) return x87m(Ops_FNOP, 0);   /* FUCOMP */
+    case 5:  /* DD C0..DF: FFREE/FXCH/FST/FSTP/FUCOM/FUCOMP, DD E0..: misc */
+      switch (reg) {
+        case 0: return x87r(Ops_FFREE, rm);
+        case 1: return x87r(Ops_FXCH, rm);
+        case 2: return x87r(Ops_FST, rm);
+        case 3: return x87r(Ops_FSTP, rm);
+        case 4: return x87r(Ops_FUCOM, rm);
+        case 5: return x87r(Ops_FUCOMP, rm);
+        default: break;
       }
       break;
-    case 6:  /* DE: m16int */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FADD, 2);
-          case 1: return x87m(Ops_FMUL, 2);
-          case 2: return x87m(Ops_FCOM, 2);
-          case 3: return x87m(Ops_FCOMP, 2);
-          case 4: return x87m(Ops_FSUB, 2);
-          case 5: return x87m(Ops_FSUBR, 2);
-          case 6: return x87m(Ops_FDIV, 2);
-          case 7: return x87m(Ops_FDIVR, 2);
-        }
-      }
+    case 6:  /* DE C0..DF: FADDP/FMULP/FCOMPP/FSUBRP/FSUBP/FDIVRP/FDIVP */
       switch (reg) {
         case 0: return x87r(Ops_FADDP, rm);
         case 1: return x87r(Ops_FMULP, rm);
-        case 3: return x87m(Ops_FCOMPP, 0);
+        /* DE D0..D7 is an undocumented FCOMP ST(i) (Bochs models it too). */
+        case 2: return x87r(Ops_FCOMP, rm);
+        /* DE D9 is FCOMPP (reg 3, rm 1); DE D8 and DA..DF are reserved.
+           Note the reg/rm split: FCOMPP is NOT in the /2 group. */
+        case 3: return (rm == 1) ? x87m(Ops_FCOMPP, 0) : (DInfo){0};
         case 4: return x87r(Ops_FSUBRP, rm);
         case 5: return x87r(Ops_FSUBP, rm);
         case 6: return x87r(Ops_FDIVRP, rm);
         case 7: return x87r(Ops_FDIVP, rm);
-        default: break;
       }
       break;
-    case 7:  /* DF: m16int / m64int */
-      if (!is_reg) {
-        switch (reg) {
-          case 0: return x87m(Ops_FILD, 2);
-          case 2: return x87m(Ops_FIST, 2);
-          case 3: return x87m(Ops_FISTP, 2);
-          case 5: return x87m(Ops_FILD, 8);
-          case 7: return x87m(Ops_FISTP, 8);
-          default: break;
-        }
-      } else {
-        if (reg == 4) return x87m(Ops_FNSTSW, 0);   /* FNSTSW AX */
-        if (reg == 5) return x87m(Ops_FNOP, 0);     /* FUCOMIP */
-        if (reg == 6) return x87m(Ops_FNOP, 0);     /* FCOMIP */
-        if (reg == 0) return x87m(Ops_FFREE, 0);
+    case 7:  /* DF C0..DF: FFREE/FSTP, DF E0: FNSTSW AX, DF E8..: FCOMIP */
+      switch (reg) {
+        case 0: return x87r(Ops_FFREE, rm);
+        case 2: return x87r(Ops_FSTP, rm);
+        case 3: return x87r(Ops_FSTP, rm);
+        /* DF E0 = FNSTSW AX (the only /4 encoding); the rest of /4 is unused. */
+        case 4:
+          if (rm == 0) { DInfo d = x87m(Ops_FNSTSW, 0); return d; }
+          break;
+        case 5: return x87r(Ops_FUCOMIP, rm);
+        case 6: return x87r(Ops_FCOMIP, rm);
+        default: break;
       }
       break;
     default: break;
   }
-  return x87m(Ops_UNDEF, 0);
+  return (DInfo){0};
 }
 
 
@@ -643,7 +717,9 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   int has_modrm = base.modrm && !is3;
 
   DInfo gi = {0};
-  int group_is_x87 = (base.group >= G_X87 && base.group < G_15);
+  /* D8..DF occupy the eight group slots G_X87..G_X87+7.  The bound must be
+     +8 (not G_15, which is a separate group for 0F AE). */
+  int group_is_x87 = (base.group >= G_X87 && base.group <= G_X87 + 7);
   int g_active = has_modrm && base.group != 0;
   if (g_active) {
     /* 0F AE (G_15) is a system group, not an x87 escape: the >= G_X87 test
@@ -1027,11 +1103,19 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   }
   if (is_x87) {
     /* `simd` carries the memory operand width (0 = register form); for the
-       register form `imm` holds the ST(i) index. */
+       register form the ST(i) index lives in `st_idx` (NOT in `imm`, which is
+       the immediate-encoding field and would add a phantom immediate byte). */
     out->simd = gi.form;
-    if (gi.form == 0) { out->b_kind = XK_X87; out->b_idx = (uint8_t)gi.imm; }
-    else { out->b_kind = XK_MEM; out->b_idx = 0; out->memsz = gi.form; }
-    if (op == Ops_FNSTSW && reg == 7 && rm == 4) out->a_kind = XK_GPR;
+    if (gi.has_st) { out->b_kind = XK_X87; out->b_idx = gi.st_idx; }
+    else if (gi.form != 0) { out->b_kind = XK_MEM; out->b_idx = 0; out->memsz = gi.form; }
+    else { out->b_kind = XK_NONE; out->b_idx = 0; }
+    /* DF E0 is FNSTSW AX: the only register-destination form.  (reg == 4 and
+       rm == 0, not the other way round -- the old test never matched, so
+       FNSTSW AX silently wrote to memory at a stale EA.) */
+    if (op == Ops_FNSTSW && mod == 3 && reg == 4 && rm == 0) {
+      out->a_kind = XK_GPR;
+      out->a_idx = 0;
+    }
   }
   if (op == Ops_SHLD || op == Ops_SHRD) {
     /* SHLD/SHRD r/m, r, imm8|CL: A = destination r/m, B = source register,

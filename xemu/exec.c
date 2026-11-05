@@ -501,7 +501,11 @@ int xemu_exec(const XemuInst *d) {
     xemu_after_inst();
     return 0;
   }
-  if (op >= Ops_FNINIT && op <= Ops_FNOP) {
+  /* x87 dispatch: a single contiguous range.  The upper bound must be the
+     first non-x87 opcode, NOT Ops_FNOP -- the register-form operations are
+     numbered after FNOP and used to fall through to the "unsupported op"
+     path. */
+  if (op >= Ops_FNINIT && op < Ops_FXSAVE) {
     if (xemu_fpu_exec(d) != 0) return -1;
     xemu.rip += d->len;
     xemu_after_inst();

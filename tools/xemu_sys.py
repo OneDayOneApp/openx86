@@ -57,6 +57,10 @@ CASES = [
     ("t84_intn_dpl", 0x84),
     # L4: PCI config space stub (0xCF8/0xCFC).
     ("t85_pci", 0x85),
+    # x87 register forms (D8..DF with mod == 3): FLD/FXCH/FCHS/FABS/FTST/FXAM,
+    # the constant block, the FCMOVcc/FCOMI family and the "P" arithmetic
+    # forms whose destination is ST(1).
+    ("t86_x87_regform", 0x86),
 ]
 
 

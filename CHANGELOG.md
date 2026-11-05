@@ -1,3 +1,56 @@
+## Unreleased — x87 寄存器形式（D9–DF）修复
+
+`make xemu-isa-scan` 扫 busybox 时报出 `fchs`/`fabs` 缺失，追下去发现是一整片
+x87 寄存器形式的解码错误，而且全都是**静默错误**（解成别的指令或 NOP，不报错）。
+
+### 根因：三处叠加
+
+1. **组号冲突**：`G_X87 = 8` 覆盖 D8..DF（8..15），而系统组 `G_15 = 9` 正好等于
+   `G_X87 + 1 = D9`。于是 D9 逃逸被当成 `0F AE` 系统组处理，`x87_group()` 根本没
+   被调用：`fld st(0)` 解成 **FXSAVE**（op 205），`fxch st(0)` 解成 **FXRSTOR**
+   （op 206），`fchs`/`fabs`/`ftst`/`fxam` 直接 #UD。
+   同时 `group_is_x87` 的边界写的是 `< G_15`，与 `G_15` 的取值耦合。
+
+2. **reg/rm 语义整体写反**：寄存器形式里 **reg 选操作、rm 选 ST(i)**，代码却是
+   `switch (rm)` 选操作、把 `reg` 当 ST 索引。DA..DF 的寄存器形式整片缺失，全部
+   落到 `op = 0`（NOP）——`faddp`/`fmulp`/`fcompp`/`fcmov*` 静默变成空操作。
+
+3. **ST 索引塞进 `.imm`**：`x87r()` 把 ST(i) 存进 `DInfo.imm`，而该字段是**立即数
+   编码**，于是解码器给指令多算一个立即数字节（`d9c0` 的 `len` 从 2 变成 3）。
+
+此外还发现四处执行层错误：
+
+- **`P` 形式的目的是 ST(1) 不是 ST(0)**：`FADDP`/`FSUBP`/`FMULP`/`FDIVP` 把结果
+  写进 ST(0) 再弹出，等于每次操作静默丢掉一个栈项。
+- **`FSUBP`/`FSUBRP`/`FDIVP`/`FDIVRP` 操作数顺序**：SDM 规定非反向形式算
+  `DEST - SRC`（DEST 是 ST(i)），反向形式算 `SRC - DEST`；原实现混用了 `x`/`y`。
+- **`FNSTSW` 不输出 TOP**：状态字 bit 13:11 是 TOP，原实现只返回 `fpu.sw`，
+  推栈/弹栈后 TOP 恒为 0。
+- **`FXAM` 分类位错误**：`+0` 应给出 C3=1，原实现全 0；`FNSTSW AX` 的寄存器
+  判定写成 `reg == 7 && rm == 4`（DF E0 实际是 `reg 4, rm 0`），从未命中。
+
+### 顺带补齐的指令
+
+此前缺失、现按 SDM 实现：`FCMOVB/E/BE/U` 与 `FCMOVNB/NE/NBE/NU`、`FCOMI`/
+`FUCOMI`/`FCOMIP`/`FUCOMIP`（写 EFLAGS）、`F2XM1`/`FYL2X`/`FYL2XP1`/`FPATAN`/
+`FPTAN`/`FSIN`/`FCOS`/`FSINCOS`/`FRNDINT`/`FSCALE`/`FPREM`/`FPREM1`/`FXTRACT`、
+`FISTTP`、`FDECSTP`/`FINCSTP`、`FNSTSW AX`。
+
+### 编号与派发
+
+x87 派发用的是区间判断 `op >= Ops_FNINIT && op < Ops_FXSAVE`。新指令必须落在
+该区间内，因此 `Ops_FXSAVE` 显式钉到 **260**，给 x87 留出 160..205 的连续空间；
+`decode.c` 加了 `_Static_assert` 防止将来重编号把 x87 挤出区间。
+
+### 测试
+
+- 新增 `tests/system/t86_x87_regform.S`：16 项检查，每项把 ST(0) 存成 IEEE
+  double 后**按位比较**期望值，覆盖 FLD/FXCH/FCHS/FABS/FSQRT/FTST/FXAM 与四个
+  `P` 形式、`FCOMPP`、`FFREE`、`FNSTSW AX`。
+- 测试用**显式字节**而不是助记符：GNU `as` 把 `fsubp`/`fsubrp` 和
+  `fdivp`/`fdivrp` 的助记符与 SDM 编码**对调**（`fsubp` 汇编成 `DE E1`，而
+  SDM 里 `DE E1` 是 `FSUBRP`）。XEMU 跟 SDM/Bochs 表走，不跟 GAS 助记符。
+
 ## Unreleased — L4 完成：PCI 桩、诊断工具链、性能 ≥20 MIPS
 
 ### L4 收尾
