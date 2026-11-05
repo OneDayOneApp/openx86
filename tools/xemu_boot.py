@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Inspect a Linux x86 boot-protocol image and its boot_params layout.
 
 Field offsets follow Documentation/arch/x86/boot.rst `struct setup_header`

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* 8259A programmable interrupt controller (master + slave).
  *
  * Master at 0x20/0x21, slave at 0xA0/0xA1. Supports ICW1-ICW4, OCW1 (mask),

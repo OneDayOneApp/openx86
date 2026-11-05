@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t61_early_idt -- regression test for the early-IDT handler entry contract.
 #
 # Bottom-up level: exception delivery + the vector-on-stack stub layout that

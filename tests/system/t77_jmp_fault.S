@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t77_jmp_fault -- an indirect JMP whose memory operand faults must keep the
 # #PF handler's RIP, not overwrite it with the 0 returned by the faulting load.
 #

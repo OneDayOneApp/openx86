@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t70_us_violation -- a CPL3 read of a supervisor (U/S=0) page must raise
 # #PF with error code P=1, W=0, U=1, RSVD=0, I/D=0 = 0x5.
 #

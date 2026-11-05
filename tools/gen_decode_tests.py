@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Generate x86-64 decode test vectors.
 
 Each instruction is assembled with llvm-mc and appended to a flat image.  The

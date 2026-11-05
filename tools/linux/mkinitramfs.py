@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """mkinitramfs.py -- build the XEMU Linux test initramfs (cpio "newc").
 
 The image contains a statically linked, libc-free ``/init`` that

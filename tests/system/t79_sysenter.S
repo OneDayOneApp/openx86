@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t79_sysenter -- SYSENTER/SYSEXIT (CPUID.01h:EDX.SEP) must actually work.
 #
 # t78 pins the SEP bit in CPUID leaf 1; this test proves the claim, so the

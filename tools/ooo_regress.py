@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Run all Stage-B OoO tests against the Stage-A reference core."""
 
 import glob

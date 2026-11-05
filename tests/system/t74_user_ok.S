@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t74_user_ok -- CPL3 access to a U/S=1 page must still succeed.
 #
 # The CPL3 payload executes from a U=1 code page, reads and writes a U=1 data

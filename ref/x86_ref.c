@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 // NEMU-style x86 reference model for DiffTest.
 //
 // Exports the same C ABI that XiangShan's difftest expects from NEMU:

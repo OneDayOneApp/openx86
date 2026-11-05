@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Run a raw flat binary under Bochs (long mode) and dump architectural state.
 
 The boot sector trampoline (boot.S) builds identity paging for 0-16MiB plus a

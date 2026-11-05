@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t86_x87_regform -- the x87 register forms (mod == 3) of the D8..DF escapes.
 #
 # These are the encodings a compiler emits for the *stack* forms (no memory

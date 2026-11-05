@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 tongxiaojun
+
 package x86.elaborate
 
 import chisel3.stage.ChiselStage

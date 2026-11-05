@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """T5 gate: drive the interactive busybox shell on the XEMU serial console.
 
 The shell initramfs (``mkinitramfs.py --shell``) mounts /proc, /sys and /dev,

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Random-program fuzzer for the per-instruction emu difftest.
 
 Generates straight-line x86-64 programs from the implemented subset, assembles

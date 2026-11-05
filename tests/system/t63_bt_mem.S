@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # BT/BTS/BTR/BTC with a memory destination and bit offsets past the operand
 # size.  The effective address must advance by (offset DIV operand_size)
 # elements while the index is offset MOD operand_size -- Bochs does exactly

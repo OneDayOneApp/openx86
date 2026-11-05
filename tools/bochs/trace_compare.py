@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Diff an XEMU PC trace against a Bochs PC trace and symbolise the first
 divergence.
 

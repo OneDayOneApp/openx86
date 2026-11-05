@@ -89,7 +89,7 @@ make emu-fuzz             # 随机程序 fuzz（默认 200 个种子）
 - Stage-B 尚无精确异常/IDT
 - 字符串指令、内存间接 CALL 未实现
 - `emu --diff` 基于 Unicorn，只覆盖 paging 关闭的用户态用例
-- 尚未添加 LICENSE（待定）
+- 许可证：MIT（见 [LICENSE](LICENSE)）
 
 ---
 
@@ -178,4 +178,4 @@ make emu-fuzz             # random-program fuzzing (200 seeds by default)
 - No precise exceptions/IDT in Stage-B yet
 - String instructions and memory-indirect CALL are not implemented
 - `emu --diff` uses Unicorn and only covers user-mode tests with paging disabled
-- No LICENSE file yet (TBD)
+- License: MIT (see [LICENSE](LICENSE))

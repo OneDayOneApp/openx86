@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Run every Stage-A assembly test with per-instruction NEMU-style difftest.
 
 Uses build/obj_core/core_tb --diff and the Unicorn-backed reference model.

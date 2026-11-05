@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t85_pci -- PCI mechanism #1 configuration space (L4).
 #
 # The stub implements CONFIG_ADDRESS at 0xCF8 and CONFIG_DATA at

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """NEMU-style post-processing of XEMU instruction traces (L4 tooling).
 
 The emulator can dump the executed PC stream:

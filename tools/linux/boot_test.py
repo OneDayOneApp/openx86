@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """T4 gate: boot real Linux under XEMU and check the serial console.
 
 This is the top of the test pyramid in xemu/docs/linux-testplan.md: every

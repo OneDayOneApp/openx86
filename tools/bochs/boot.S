@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 /* Minimal long-mode trampoline for Bochs golden-reference runs.
  *
  * The driver loads the payload directly with `loadmem <image> 0x400000`, so

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Per-instruction Unicorn vs XEMU differential tester (XEMU P1).
 
 Each vector initializes identical GPR/XMM/RFLAGS/memory in Unicorn and XEMU,

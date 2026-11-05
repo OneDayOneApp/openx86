@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 #ifndef X86_DIFFTEST_H
 #define X86_DIFFTEST_H
 

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t71_wp_violation -- CR0.WP semantics.
 #
 #   1. With CR0.WP=1, a CPL0 write to a read-only PTE (#PF: P=1, W=1, U=0,

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Find instructions in a kernel image that XEMU's decoder rejects.
 
 Disassembles the executable sections with llvm-objdump, then feeds every

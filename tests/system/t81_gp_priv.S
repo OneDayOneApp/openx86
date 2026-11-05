@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t81_gp_priv -- privileged instructions executed at CPL3 must raise #GP(0)
 # instead of silently executing.
 #

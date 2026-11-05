@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t75_call_fault -- a faulting stack access must leave the interrupted
 # instruction atomically un-executed.
 #

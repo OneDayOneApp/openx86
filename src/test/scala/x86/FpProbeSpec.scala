@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 tongxiaojun
+
 package x86
 
 import chisel3._

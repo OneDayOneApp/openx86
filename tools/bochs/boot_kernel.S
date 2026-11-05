@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 /* Long-mode launch stub for tools/bochs/kernel_boot.py.
  *
  * Unlike boot.S this stub is NOT reached through the BIOS.  The Bochs debugger

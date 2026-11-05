@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Difftest the Stage-A x86 core against Unicorn.
 
 Assembles a flat test image, runs the Verilator model and Unicorn with the same

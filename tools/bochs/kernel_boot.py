@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Boot a Linux vmlinux ELF under Bochs exactly the way xemu/boot.c does, and
 capture an instruction-level PC trace that can be diffed against
 `./build/xemu --kernel <elf> --trace-pc=FILE`.

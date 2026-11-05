@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t82_ss_np -- segment selector loads must validate the descriptor the way
 # Bochs load_seg_reg()/fetch_raw_descriptor() do.
 #

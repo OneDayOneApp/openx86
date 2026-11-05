@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """System-mode co-simulation: run the DUT and XEMU on the same image and
 compare the final architectural state."""
 

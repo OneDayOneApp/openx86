@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* Linux x86 64-bit boot protocol loader for the standalone runner.
  *
  * The bzImage's protected-mode payload is placed at its `code32_start`

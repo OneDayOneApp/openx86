@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* 16550A UART (COM1/COM2) for the L0 device model.
  *
  * Register offsets from the port base:

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t72_ad_bits -- the pager must set the accessed bit (bit 5) on every
 # successful access and the dirty bit (bit 6) on every successful write, for
 # 4 KiB PTEs, 2 MiB PMD pages and 1 GiB PUD pages.

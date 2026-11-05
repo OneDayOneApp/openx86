@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Three-way differential test: Bochs vs XEMU vs Unicorn.
 
 For each test image the three models start from the same architectural state

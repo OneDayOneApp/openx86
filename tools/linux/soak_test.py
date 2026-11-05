@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """L4 soak test: keep the emulator running for N minutes and prove it never hangs.
 
 The plan (`xemu/docs/linux-plan.md`, L4 acceptance) asks for "连续运行 10 分钟

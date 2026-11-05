@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # SGDT/SIDT round-trip: a 64-bit pseudo-descriptor is 10 bytes (16-bit limit
 # followed by a 64-bit base).  XEMU used to classify 0F AE as an x87 escape
 # and leave 0F 01 /0,/1 UNDEF, so Linux's oops header printed garbage

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t76_cr3_flush -- writing CR3 with an unchanged value must still flush the TLB.
 #
 # Linux flushes the TLB by reloading CR3 with its current value

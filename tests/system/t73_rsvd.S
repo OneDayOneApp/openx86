@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t73_rsvd -- reserved-bit violations.
 #
 #   fault 1: a present 4 KiB PTE with bit 51 set must #PF with RSVD=1

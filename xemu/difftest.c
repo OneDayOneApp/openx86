@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* NEMU-style difftest ABI for XEMU. */
 #include "xemu.h"
 #include "../ref/difftest_abi.h"

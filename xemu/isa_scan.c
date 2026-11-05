@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* Static decoder coverage scanner.
  *
  * Reads `ADDR HEXBYTES [MNEMONIC]` lines (produced by tools/isa_scan.py from

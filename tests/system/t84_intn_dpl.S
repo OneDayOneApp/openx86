@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t84_intn_dpl -- a software interrupt whose IDT gate DPL is lower than CPL
 # must raise #GP(0) instead of being delivered.
 #

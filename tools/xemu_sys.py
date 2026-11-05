@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 """Run XEMU-only system tests (CPL3/TSS/timer IRQ) on the standalone runner.
 
 These features are not implemented in the RTL, so the oracle is the expected

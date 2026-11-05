@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t78_cpuid -- CPUID must match the product specification (docs/PRD.md §5.7)
 # and must only advertise what the implementation actually provides.
 #

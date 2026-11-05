@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 tongxiaojun
+
 package x86
 
 /** Global configuration for the XiangShan-inspired x86-64 core. */

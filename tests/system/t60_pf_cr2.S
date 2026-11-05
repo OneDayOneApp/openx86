@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t60_pf_cr2 -- CR2 must hold the faulting linear address for read, write
 # and instruction-fetch page faults.
 #

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* PCI mechanism #1 configuration space stub (L4).
  *
  * CONFIG_ADDRESS is a 32-bit register at 0xCF8..0xCFB:

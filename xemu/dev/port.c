@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* Port I/O dispatcher: routes IN/OUT to the L0 device models. */
 #include "../xemu.h"
 

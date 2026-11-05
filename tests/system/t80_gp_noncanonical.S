@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 tongxiaojun
+#
 # t80_gp_noncanonical -- a non-canonical linear address must raise #GP(0),
 # not #PF, and CR2 must not be written.
 #

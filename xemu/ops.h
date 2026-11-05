@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 #ifndef XEMU_OPS_H
 #define XEMU_OPS_H
 

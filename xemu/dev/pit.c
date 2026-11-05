@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 tongxiaojun
+ */
 /* 8254 programmable interval timer.
  *
  * Channel 0 drives IRQ0. Modes implemented: 2 (rate generator) and 3 (square
