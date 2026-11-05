@@ -154,14 +154,23 @@ static int load_elf(const uint8_t *img, long n, uint64_t *entry) {
       p_paddr  |= (uint64_t)ph[0x18 + b] << (8 * b);
       p_filesz |= (uint64_t)ph[0x20 + b] << (8 * b);
     }
-    uint64_t dest = p_paddr ? p_paddr : p_vaddr;
+    /* Prefer the physical address. Reconstructed vmlinux ELFs (kallsyms-only
+     * images) set p_paddr = p_vaddr = the kernel virtual address; map those
+     * back through the kernel image window (__START_KERNEL_map). */
+    uint64_t dest = p_paddr;
+    if (dest == 0 || dest >= 0xffffffff80000000ull)
+      dest = p_vaddr >= 0xffffffff80000000ull ? p_vaddr - 0xffffffff80000000ull : p_vaddr;
     if (dest + p_filesz > XEMU_MEM_SIZE) {
-      fprintf(stderr, "xemu: segment 0x%llx+0x%llx exceeds RAM\n",
-              (unsigned long long)dest, (unsigned long long)p_filesz);
+      fprintf(stderr, "xemu: segment 0x%llx+0x%llx exceeds RAM (%llu MiB)\n",
+              (unsigned long long)dest, (unsigned long long)p_filesz,
+              (unsigned long long)(XEMU_MEM_SIZE >> 20));
       return -1;
     }
     if (xemu_mem_write(dest, img + p_offset, p_filesz) != 0) return -1;
   }
+  /* Same normalisation for the entry point: start at its physical alias so
+   * the identity map installed by the loader is in effect. */
+  if (*entry >= 0xffffffff80000000ull) *entry -= 0xffffffff80000000ull;
   return 0;
 }
 

@@ -165,7 +165,7 @@ XEMU_SO := build/ref/libxemu.so
 XEMU_MEM_MB ?= 16
 XEMU_DEFS := -DXEMU_MEM_SIZE_MB=$(XEMU_MEM_MB)
 
-XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c xemu/main.c,$(wildcard xemu/*.c)) \
+XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c xemu/main.c xemu/isa_scan.c,$(wildcard xemu/*.c)) \
             $(wildcard xemu/dev/*.c)
 
 .PHONY: xemu-so
@@ -182,6 +182,22 @@ build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h
 	  $(XEMU_SRC) xemu/main.c -o $@ -lm
 
 xemu-bin: build/xemu
+
+# Static decoder coverage scan over a kernel image (see tools/isa_scan.py).
+build/xemu_isa_scan: $(XEMU_SRC) xemu/isa_scan.c xemu/xemu.h
+	@mkdir -p build
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra $(XEMU_DEFS) \
+	  $(XEMU_SRC) xemu/isa_scan.c -o $@ -lm
+
+.PHONY: xemu-isa-scan
+xemu-isa-scan: build/xemu_isa_scan
+	python3 tools/isa_scan.py $(or $(IMAGE),build/linux/vmlinux)
+
+# T4 gate: real Linux boots to userspace and runs /init (see xemu/docs/linux-testplan.md).
+# Artifacts come from tools/linux/build_kernel.sh + tools/linux/mkinitramfs.py.
+.PHONY: xemu-linux-test
+xemu-linux-test: xemu-bin
+	python3 tools/linux/boot_test.py
 
 .PHONY: isa-diff
 isa-diff: xemu-so

@@ -32,13 +32,28 @@ static void set_szp(uint64_t res, int sz) {
   setf(F_PF, parity(res));
 }
 
+/* Indices 16..19 denote the legacy high-byte registers AH/CH/DH/BH, which
+ * alias bits 8..15 of RAX/RCX/RDX/RBX and exist only when the instruction has
+ * no REX prefix. The decoder rewrites 4..7 to 16..19 in that case. */
 static uint64_t read_reg(int idx, int sz) {
+  if (idx >= 16) {
+    if (sz == 1) return (xemu.gpr[idx - 16] >> 8) & 0xff;
+    idx -= 16;
+  }
   uint64_t v = xemu.gpr[idx];
   if (sz >= 8) return v;
   return v & mask_of(sz);
 }
 
 static void write_reg(int idx, uint64_t val, int sz) {
+  if (idx >= 16) {
+    if (sz == 1) {
+      uint64_t *r = &xemu.gpr[idx - 16];
+      *r = (*r & ~0xff00ull) | ((val & 0xff) << 8);
+      return;
+    }
+    idx -= 16;
+  }
   if (sz >= 8) { xemu.gpr[idx] = val; return; }
   if (sz == 4) { xemu.gpr[idx] = val & 0xffffffffull; return; }
   uint64_t m = mask_of(sz);
@@ -377,16 +392,25 @@ int xemu_exec(const XemuInst *d) {
       break;
     }
     case Ops_BT: case Ops_BTS: case Ops_BTR: case Ops_BTC: {
-      uint64_t a = read_op(d, 1, sz);
-      uint64_t off = (d->b_kind == XK_IMM) ? d->imm : read_reg(d->b_idx, sz);
-      off &= (uint64_t)(sz * 8 - 1);
+      /* With a memory destination the bit offset addresses the containing
+         element: the effective address advances by (offset / operand_bits)
+         elements and only the remainder indexes the bit. Linux relies on
+         this when it sets bits >= 64 in a bitmap (e.g. system_vectors), so
+         masking the offset without moving the address corrupts neighbours. */
+      int bits = sz * 8;
+      uint64_t raw = (d->b_kind == XK_IMM) ? d->imm : read_reg(d->b_idx, sz);
+      int is_mem = (d->a_kind == XK_MEM);
+      uint64_t ea = 0;
+      uint64_t off = raw & (uint64_t)(bits - 1);
+      if (is_mem) ea = xemu_ea(d) + ((int64_t)raw / bits) * (uint64_t)sz;
+      uint64_t a = is_mem ? ld(ea, sz) : read_op(d, 1, sz);
       setf(F_CF, (a >> off) & 1);
       if (op != Ops_BT) {
         uint64_t m = 1ull << off;
         if (op == Ops_BTS) a |= m;
         else if (op == Ops_BTR) a &= ~m;
         else a ^= m;
-        write_op(d, 1, a, sz);
+        if (is_mem) st(ea, a, sz); else write_op(d, 1, a, sz);
       }
       break;
     }
@@ -463,9 +487,17 @@ int xemu_exec(const XemuInst *d) {
       int si = d->a_idx;
       if (si < 0 || si > 5) break;
       if (d->cond == 0xff) break;
-      if (si == 1) break;             /* cannot load CS from r/m */
-      uint64_t v = read_op(d, 1, 2);
-      *segs[si] = v & 0xffff;
+      if (d->dir == 0) {
+        /* 8C: r/m <- Sreg. Memory form stores 16 bits; a register form
+           zero-extends into 32 bits (REX.W writes all 64). */
+        uint64_t v = *segs[si] & 0xffff;
+        if (d->b_kind == XK_GPR) write_reg(d->b_idx, v, sz);
+        else if (d->b_kind == XK_MEM) st(xemu_ea(d), v, 2);
+      } else {
+        if (si == 1) break;           /* cannot load CS from r/m */
+        uint64_t v = read_op(d, 1, 2);
+        *segs[si] = v & 0xffff;
+      }
       break;
     }
     case Ops_LEA:
@@ -757,6 +789,151 @@ int xemu_exec(const XemuInst *d) {
       }
       break;
     }
+    case Ops_CLAC: case Ops_STAC: case Ops_WBINVD: case Ops_SERIALIZE:
+    case Ops_EMMS: case Ops_FWAIT: case Ops_MONITOR: case Ops_MWAIT:
+    case Ops_TILERELEASE: case Ops_LKGS: case Ops_PREFETCH: case Ops_UD1:
+      break;   /* no architectural state change in this model */
+    case Ops_SHLD: case Ops_SHRD: {
+      /* A = destination r/m, B = source register, count = imm8 or CL.
+         Unlike SHL/SHR the source feeds the vacated bits. */
+      int cnt = (d->imm_kind == 1) ? (int)(d->imm & 0xff) : (int)(read_reg(1, 1) & 0xff);
+      int bits = sz * 8;
+      uint64_t m = mask_of(sz);
+      if (cnt == 0) break;
+      if (cnt > bits) cnt = bits;
+      uint64_t dst = read_op(d, 1, sz);
+      uint64_t src = read_op(d, 0, sz);
+      uint64_t r;
+      int cf;
+      if (op == Ops_SHLD) {
+        r = ((dst << cnt) | (src >> (bits - cnt))) & m;
+        cf = (int)((dst >> (bits - cnt)) & 1);
+      } else {
+        r = ((dst >> cnt) | (src << (bits - cnt))) & m;
+        cf = (int)((dst >> (cnt - 1)) & 1);
+      }
+      int msb = (int)((r >> (bits - 1)) & 1);
+      int msb2 = (int)((r >> (bits - 2)) & 1);
+      setf(F_CF, cf);
+      setf(F_OF, msb ^ msb2);
+      set_szp(r, sz);
+      write_op(d, 1, r, sz);
+      break;
+    }
+    case Ops_POPCNT: {
+      uint64_t v = read_op(d, 0, sz);
+      int n = 0;
+      for (int i = 0; i < sz * 8; i++) n += (int)((v >> i) & 1);
+      write_reg(d->a_idx, (uint64_t)n, sz);
+      setf(F_ZF, n == 0);
+      setf(F_CF, 0); setf(F_OF, 0); setf(F_SF, 0); setf(F_AF, 0); setf(F_PF, 0);
+      break;
+    }
+    case Ops_MOVNTI:
+      write_op(d, 1, read_op(d, 0, sz), sz);
+      break;
+    case Ops_RDRAND: case Ops_RDSEED: {
+      /* Deterministic pseudo-random stream derived from the TSC so that
+         guest-visible behaviour stays reproducible. */
+      xemu.tsc = xemu.tsc * 6364136223846793005ull + 1442695040888963407ull;
+      uint64_t v = xemu.tsc ^ (xemu.rip * 0x9E3779B97F4A7C15ull);
+      write_reg(d->a_idx, v, sz);
+      setf(F_CF, 1);
+      break;
+    }
+    case Ops_LAR:
+      setf(F_ZF, 0);   /* no LDT: selector not usable via LAR */
+      break;
+    case Ops_XSETBV:
+      break;
+    case Ops_XSAVES: case Ops_XSAVEC: case Ops_XRSTORS:
+      break;
+    case Ops_RDFSBASE:
+      write_reg(d->a_idx, xemu.fs_base, 8);
+      break;
+    case Ops_RDGSBASE:
+      write_reg(d->a_idx, xemu.gs_base, 8);
+      break;
+    case Ops_WRFSBASE:
+      xemu.fs_base = read_reg(d->a_idx, 8);
+      break;
+    case Ops_WRGSBASE:
+      xemu.gs_base = read_reg(d->a_idx, 8);
+      break;
+    case Ops_SWAPGS: {
+      uint64_t t = xemu.gs_base;
+      xemu.gs_base = xemu.kernel_gs_base;
+      xemu.kernel_gs_base = t;
+      break;
+    }
+    case Ops_RDTSC: case Ops_RDTSCP:
+      xemu.gpr[0] = (xemu.gpr[0] & ~0xffffffffull) | (xemu.tsc & 0xffffffffu);
+      xemu.gpr[2] = (xemu.gpr[2] & ~0xffffffffull) | (xemu.tsc >> 32);
+      if (op == Ops_RDTSCP) xemu.gpr[1] = (xemu.gpr[1] & ~0xffffffffull);
+      break;
+    case Ops_RDPMC:
+      xemu.gpr[0] = 0; xemu.gpr[2] = 0;
+      break;
+    case Ops_XGETBV:
+      xemu.gpr[0] = 3;  /* XCR0: x87 | SSE */
+      xemu.gpr[2] = 0;
+      break;
+    case Ops_CLTS:
+      xemu.cr0 &= ~8ull;
+      break;
+    case Ops_PAUSE:
+      break;
+    case Ops_BSWAP: {
+      uint64_t v = read_reg(d->a_idx, sz);
+      if (sz == 8) {
+        uint64_t r = 0;
+        for (int i = 0; i < 8; i++) r |= ((v >> (8 * i)) & 0xff) << (8 * (7 - i));
+        write_reg(d->a_idx, r, 8);
+      } else {
+        uint32_t x = (uint32_t)v, r = 0;
+        for (int i = 0; i < 4; i++) r |= ((x >> (8 * i)) & 0xff) << (8 * (3 - i));
+        write_reg(d->a_idx, r, 4);
+      }
+      break;
+    }
+    case Ops_LLDT:
+      /* No LDT is modelled; accept the selector. */
+      break;
+    case Ops_VERR: case Ops_VERW:
+      setf(F_ZF, 1);   /* selector considered valid: flat model, no LDT */
+      break;
+    case Ops_SGDT: case Ops_SIDT: {
+      /* Store the pseudo-descriptor: 16-bit limit followed by the 64-bit
+         base. Linux issues SGDT with an 8(-byte) offset into a 16-byte
+         buffer and only inspects the base, so the full form is written. */
+      uint64_t base = (op == Ops_SGDT) ? xemu.gdtr_base : xemu.idtr_base;
+      uint16_t limit = (op == Ops_SGDT) ? xemu.gdtr_limit : xemu.idtr_limit;
+      uint64_t ea = xemu_ea(d);
+      /* The register form does not exist architecturally; tolerate it. */
+      if (d->a_kind != XK_MEM) { write_reg(d->a_idx, base, 8); break; }
+      st(ea, (uint64_t)limit, 2);
+      st(ea + 2, base, 8);
+      break;
+    }
+    case Ops_SMSW: {
+      uint64_t v = xemu.cr0 & 0xffff;
+      if (d->a_kind == XK_GPR) write_reg(d->a_idx, v, 2);
+      else st(xemu_ea(d), v, 2);
+      break;
+    }
+    case Ops_LMSW: {
+      uint64_t v = (d->a_kind == XK_GPR) ? read_reg(d->a_idx, 2) : ld(xemu_ea(d), 2);
+      xemu.cr0 = (xemu.cr0 & ~0xfull) | (v & 0xf);
+      break;
+    }
+    case Ops_SLDT:
+      if (d->a_kind == XK_GPR) write_reg(d->a_idx, 0, 2);
+      else st(xemu_ea(d), 0, 2);
+      break;
+    case Ops_STR:
+      if (d->a_kind == XK_GPR) write_reg(d->a_idx, xemu.tr_sel, 2);
+      else st(xemu_ea(d), xemu.tr_sel, 2);
+      break;
     case Ops_LTR: {
       uint64_t sel = read_reg(d->a_idx, 2) & 0xffff;
       uint64_t base = 0, limit = 0; uint32_t access = 0;
@@ -802,7 +979,7 @@ int xemu_exec(const XemuInst *d) {
         for (int i = 1; i < level; i++) {
           rbp -= psz;
           uint64_t v = 0;
-          xemu_mem_read(rbp, &v, (size_t)psz);
+          xemu_vread(rbp, &v, (size_t)psz);
           push_val(v, psz);
         }
         push_val(frame, psz);
@@ -834,7 +1011,7 @@ int xemu_exec(const XemuInst *d) {
       /* The RTL IRET microcode always pops the 5-slot frame. */
       uint64_t vals[5];
       for (int i = 0; i < 5; i++) {
-        if (xemu_mem_read(xemu.gpr[4], &vals[i], 8) != 0) return -1;
+        if (xemu_vread(xemu.gpr[4], &vals[i], 8) != 0) return -1;
         xemu.gpr[4] += 8;
       }
       int new_cpl = (int)(vals[1] & 3);
@@ -925,7 +1102,7 @@ int xemu_exec(const XemuInst *d) {
       /* DPL check: INT n is only allowed if gate DPL >= CPL. */
       if (vec < 32) {
         uint8_t gate[16];
-        if (xemu_mem_read(xemu.idtr_base + vec * 16, gate, 16) == 0) {
+        if (xemu_vread(xemu.idtr_base + vec * 16, gate, 16) == 0) {
           uint64_t low = 0;
           for (int i = 0; i < 8; i++) low |= (uint64_t)gate[i] << (8 * i);
           int dpl = (int)((low >> 45) & 3);

@@ -18,10 +18,13 @@ typedef struct {
   uint8_t ier, iir, fcr, lcr, mcr, lsr, msr, scr;
   int has_rx;
   uint8_t rx;
-  int tx_irq_armed;
+  int thre_pending;   /* transmitter-empty interrupt latched in IIR */
 } Uart;
 
 static Uart uart[2];
+static char serbuf[512];
+static size_t serbuf_used;
+const char *xemu_uart_serbuf(void) { return serbuf; }
 
 void xemu_uart_reset(void) {
   memset(uart, 0, sizeof(uart));
@@ -72,7 +75,15 @@ int xemu_uart_in(uint32_t off, int size, uint64_t *val) {
       }
       break;
     case 1: v = dlab(u) ? u->dlm : u->ier; break;
-    case 2: v = u->iir; break;
+    case 2:
+      /* Reading IIR acknowledges the highest-priority pending interrupt.
+         A pending THRE interrupt reads as 0x02 and clears on this read. */
+      v = u->iir;
+      if (u->iir == 0x02) {
+        u->iir = (u->has_rx && (u->ier & 0x01)) ? 0x04 : 0x01;
+        u->thre_pending = 0;
+      }
+      break;
     case 3: v = u->lcr; break;
     case 4: v = u->mcr; break;
     case 5: v = u->lsr; break;
@@ -96,10 +107,38 @@ int xemu_uart_out(uint32_t off, int size, uint64_t val) {
         if (b == '\n') { fputc('\r', stdout); }
         fputc(b, stdout);
         fflush(stdout);
+        if (xemu_serial_stop) {
+          if (serbuf_used < sizeof(serbuf) - 1) serbuf[serbuf_used++] = (char)b;
+          else {
+            memmove(serbuf, serbuf + 256, sizeof(serbuf) - 256);
+            serbuf_used = sizeof(serbuf) - 256;
+          }
+          serbuf[serbuf_used] = 0;
+          if (strstr(serbuf, xemu_serial_stop)) {
+            xemu_serial_stopped = 1;
+            xemu.halted = 1;
+          }
+        }
       }
       u->lsr |= 0x60;
+      /* The byte leaves the shift register almost immediately at emulator
+         speed, so latch THRE and, if the guest enabled the transmit-holding
+         interrupt, raise IRQ4. Without this the tty layer pushes one byte
+         into the FIFO, waits for the transmit interrupt and never resumes,
+         which is why only the first byte of a userspace write() appeared. */
+      u->thre_pending = 1;
+      if (u->ier & 0x02) {
+        u->iir = 0x02;
+        xemu_pic_raise(4);
+      }
       break;
-    case 1: u->ier = b; break;
+    case 1:
+      u->ier = b;
+      if ((b & 0x02) && u->thre_pending) {
+        u->iir = 0x02;
+        xemu_pic_raise(4);
+      }
+      break;
     case 2:
       if (b & 0x01) break;           /* FCR read-back is via IIR */
       u->fcr = b;

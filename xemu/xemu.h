@@ -73,6 +73,7 @@ typedef struct {
   uint8_t a_idx, b_idx;
   uint64_t imm;
   uint8_t imm_kind;
+  uint8_t dir; /* table direction bit: 1 = A is destination (see MOV_SEG) */
   uint8_t rep; /* 0 none, 1 F3, 2 F2 */
   uint8_t seg_ovr;  /* 0 none, 1 ES, 2 CS, 3 SS, 4 DS, 5 FS, 6 GS */
   uint8_t port_imm; /* IN/OUT with imm8 port */
@@ -152,6 +153,26 @@ extern uint64_t xemu_cr2_at_fault;
 extern uint64_t xemu_fault_pc;
 extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;
+/* Diagnostics: every exception delivery bumps xemu_exc_seq and is logged to
+ * stderr when xemu_trace_exc is set (see xemu_raise_exc in mem.c). */
+extern uint64_t xemu_exc_seq;
+extern int xemu_trace_exc;
+/* Physical-memory watchpoint: stop at the first write overlapping
+ * [xemu_watch_lo, xemu_watch_hi). Set by --watch-mem=LO:HI. */
+extern uint64_t xemu_watch_lo, xemu_watch_hi, xemu_watch_pc, xemu_watch_val;
+extern int xemu_watch_hit, xemu_watch_en, xemu_watch_byte;
+extern int xemu_watch_skip;   /* ignore the first N matching writes */
+/* The RTL subset core models no CS/SS state and hardcodes the same-level trap
+ * frame selectors to SS=0/CS=8. difftest_init() turns this on so lockstep
+ * compares against that model; the standalone runner keeps the real frame. */
+extern int xemu_trap_frame_compat;
+/* Boot-test helper: stop the run once this marker has been written to the
+ * serial console (see --serial-stop=STR). */
+extern const char *xemu_serial_stop;
+extern int xemu_serial_stopped;
+const char *xemu_uart_serbuf(void);
+extern uint64_t xemu_watch_steps;  /* steps counter for --watch-after */
+extern uint64_t xemu_watch_min_steps;
 
 /* Returns 0 on success, negative on unsupported/invalid instruction. */
 int xemu_decode(uint64_t rip, XemuInst *out);

@@ -1,6 +1,8 @@
 #include "xemu.h"
 #include "ops.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* Immediate classes (mirror ImmKind). */
 enum { IMM_NONE = 0, IMM_8 = 1, IMM_Z = 2, IMM_32 = 3, IMM_64 = 4, IMM_16 = 5 };
@@ -17,7 +19,10 @@ typedef struct {
   uint8_t op, modrm, imm, dir, group, force8, form, sse_sel, store;
 } DInfo;
 
-static DInfo primary[256], twobyte[256], groups[7][8];
+/* Row index is `group - 1`, so G_15 (9) addresses row 8: nine rows, not
+ * seven. Writing groups[G_15 - 1] used to run 72 bytes past the end of this
+ * array and corrupt neighbouring .bss (the x87 state in fpu.c sat there). */
+static DInfo primary[256], twobyte[256], groups[9][8];
 static int tables_ready;
 
 #define DI(opv, ...) ((DInfo){ .op = (opv), __VA_ARGS__ })
@@ -186,6 +191,21 @@ static void init_tables(void) {
   set(twobyte, 0x32, DI(Ops_RDMSR, .modrm = 0));
   set(twobyte, 0x0b, DI(Ops_UD2, .modrm = 0));
   set(twobyte, 0x01, DI(Ops_UNDEF, .modrm = 1));
+  set(twobyte, 0x06, DI(Ops_CLTS, .modrm = 0));
+  set(twobyte, 0x09, DI(Ops_WBINVD, .modrm = 0));
+  set(twobyte, 0x77, DI(Ops_EMMS, .modrm = 0));
+  set(twobyte, 0x18, DI(Ops_PREFETCH, .modrm = 1));
+  set(twobyte, 0xb9, DI(Ops_UD1, .modrm = 1));
+  set(twobyte, 0xa4, DI(Ops_SHLD, .modrm = 1, .imm = IMM_8));
+  set(twobyte, 0xa5, DI(Ops_SHLD, .modrm = 1));
+  set(twobyte, 0xac, DI(Ops_SHRD, .modrm = 1, .imm = IMM_8));
+  set(twobyte, 0xad, DI(Ops_SHRD, .modrm = 1));
+  set(twobyte, 0xb8, DI(Ops_POPCNT, .modrm = 1));
+  set(twobyte, 0xc3, DI(Ops_MOVNTI, .modrm = 1, .dir = 0));
+  set(twobyte, 0x02, DI(Ops_LAR, .modrm = 1, .dir = 1));
+  set(twobyte, 0x31, DI(Ops_RDTSC, .modrm = 0));
+  set(twobyte, 0x33, DI(Ops_RDPMC, .modrm = 0));
+  for (int r = 0; r < 8; r++) set(twobyte, 0xc8 + r, DI(Ops_BSWAP, .modrm = 0));
   set(twobyte, 0x00, DI(Ops_UNDEF, .modrm = 1));
   set(twobyte, 0x1e, DI(Ops_ENDBR, .modrm = 1));
   set(twobyte, 0x1f, DI(Ops_NOP, .modrm = 1));
@@ -588,9 +608,13 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   int has_modrm = base.modrm && !is3;
 
   DInfo gi = {0};
+  int group_is_x87 = (base.group >= G_X87 && base.group < G_15);
   int g_active = has_modrm && base.group != 0;
   if (g_active) {
-    if (base.group >= G_X87) gi = x87_group(base.group - G_X87, reg, mod, rm);
+    /* 0F AE (G_15) is a system group, not an x87 escape: the >= G_X87 test
+       used to swallow it and silently decode FXSAVE/FXRSTOR/fences/MXCSR as
+       garbage x87 operations. */
+    if (group_is_x87) gi = x87_group(base.group - G_X87, reg, mod, rm);
     else gi = groups[base.group - 1][reg];
   }
 
@@ -598,7 +622,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   int dir = g_active ? gi.dir : base.dir;
   int form = g_active ? gi.form : base.form;
   int op = is3 ? Ops_UNDEF : (g_active ? gi.op : base.op);
-  int is_x87 = (base.group >= G_X87);
+  int is_x87 = group_is_x87;
   int force8 = base.force8;
   int sse_sel = base.sse_sel && !g_active;
 
@@ -619,11 +643,67 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   else if (is5B) op = p66 ? Ops_CVTPS2DQ : Ops_CVTDQ2PS;
   else if (isLidt) op = Ops_LIDT;
   else if (isInvlpg) op = Ops_INVLPG;
+  /* 0F 01: SGDT/SIDT/LGDT/LIDT/SMSW/LMSW/INVLPG (the /4 and /5 slots are
+     VERR/VERW for 0F 00 and unused here). */
   if (isGdtLtr && !rm_is_reg) {
-    if (reg == 2) op = Ops_LGDT;
-    else if (reg == 3) op = Ops_LIDT;
+    switch (reg) {
+      case 0: op = Ops_SGDT; break;
+      case 1: op = Ops_SIDT; break;
+      case 2: op = Ops_LGDT; break;
+      case 3: op = Ops_LIDT; break;
+      case 4: op = Ops_SMSW; break;
+      case 6: op = Ops_LMSW; break;
+      default: break;
+    }
   }
-  if (is0F && opcode == 0x00 && rm_is_reg && reg == 3) op = Ops_LTR;
+  /* 0F 00: SLDT/STR/LLDT/LTR/VERR/VERW. */
+  if (is0F && opcode == 0x00) {
+    if (reg == 0) op = Ops_SLDT;
+    else if (reg == 1) op = Ops_STR;
+    else if (reg == 2) op = Ops_LLDT;
+    else if (reg == 3) op = Ops_LTR;
+    else if (reg == 4) op = Ops_VERR;
+    else if (reg == 5) op = Ops_VERW;
+  }
+  /* 0F 01 with a register ModRM carries a whole family of system ops. */
+  if (is0F && opcode == 0x01 && rm_is_reg) {
+    switch (modrm) {
+      case 0xc8: op = Ops_MONITOR; break;
+      case 0xc9: op = Ops_MWAIT; break;
+      case 0xd0: op = Ops_XGETBV; break;
+      case 0xd1: op = Ops_XSETBV; break;
+      case 0xe8: op = Ops_SERIALIZE; break;
+      case 0xca: op = Ops_CLAC; break;
+      case 0xcb: op = Ops_STAC; break;
+      case 0xf8: op = Ops_SWAPGS; break;
+      case 0xf9: op = Ops_RDTSCP; break;
+      default: break;
+    }
+  }
+  /* F3 0F B8 POPCNT, 0F C7 /6 RDRAND, /7 RDSEED. */
+  if (is0F && opcode == 0x18) op = Ops_PREFETCH;
+  if (is0F && opcode == 0xc7) {
+    if (reg == 6) op = Ops_RDRAND;
+    else if (reg == 7) op = Ops_RDSEED;
+    else if (reg == 3 && rep == 1) op = Ops_XRSTORS;
+    else if (reg == 4 && rep == 1) op = Ops_XSAVEC;
+    else if (reg == 5 && rep == 1) op = Ops_XSAVES;
+  }
+  /* F3 0F AE /0-/3: RDFSBASE/RDGSBASE/WRFSBASE/WRGSBASE. */
+  if (is0F && opcode == 0xae && rm_is_reg && rep == 1) {
+    switch (reg) {
+      case 0: op = Ops_RDFSBASE; break;
+      case 1: op = Ops_RDGSBASE; break;
+      case 2: op = Ops_WRFSBASE; break;
+      case 3: op = Ops_WRGSBASE; break;
+      default: break;
+    }
+  }
+  /* F2 0F 00 /6: LKGS (LAM-related; accept as a no-op). */
+  if (is0F && opcode == 0x00 && rm_is_reg == 0 && rep == 2 && reg == 6)
+    op = Ops_LKGS;
+  /* F3 90 is PAUSE (the REP prefix plus NOP). */
+  if (is0F == 0 && opcode == 0x90 && rep == 1) op = Ops_PAUSE;
   if (is0F && opcode == 0xba) {
     static const int btops[8] = {0,0,0,0,Ops_BT,Ops_BTS,Ops_BTR,Ops_BTC};
     op = btops[reg];
@@ -685,6 +765,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
 
   out->len = inst_len;
   out->op = op;
+  out->dir = (uint8_t)dir;
   out->cond = opcode & 0xf;
   out->opsz = opsz;
   out->imm = imm;
@@ -896,18 +977,13 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     static const int segmap[8] = {0, 1, 2, 3, 4, 5, -1, -1};
     int sreg = segmap[reg];
     out->cond = (uint8_t)(sreg < 0 ? 0xff : sreg);
-    out->opsz = 2;
-    if (dir == 0) {                   /* 8C: store sreg into r/m */
-      out->a_kind = XK_SEG; out->a_idx = (uint8_t)(sreg < 0 ? 0 : sreg);
-      out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
-      out->b_idx = rm | (rexB << 3);
-      out->memsz = 2;
-    } else {                          /* 8E: load sreg from r/m */
-      out->a_kind = XK_SEG; out->a_idx = (uint8_t)(sreg < 0 ? 0 : sreg);
-      out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
-      out->b_idx = rm | (rexB << 3);
-      out->memsz = 2;
-    }
+    /* 8C writes the 16-bit selector into r/m; a 32-bit GPR destination is
+       zero-extended (and REX.W writes 64 bits), so keep the decoded operand
+       size for the register form. 8E always reads a 16-bit word. */
+    if (dir == 0) out->memsz = 2; else out->opsz = 2;
+    out->a_kind = XK_SEG; out->a_idx = (uint8_t)(sreg < 0 ? 0 : sreg);
+    out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
+    out->b_idx = rm | (rexB << 3);
     out->illegal = (sreg < 0);
   }
   if (is_x87) {
@@ -917,6 +993,68 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     if (gi.form == 0) { out->b_kind = XK_X87; out->b_idx = (uint8_t)gi.imm; }
     else { out->b_kind = XK_MEM; out->b_idx = 0; out->memsz = gi.form; }
     if (op == Ops_FNSTSW && reg == 7 && rm == 4) out->a_kind = XK_GPR;
+  }
+  if (op == Ops_SHLD || op == Ops_SHRD) {
+    /* SHLD/SHRD r/m, r, imm8|CL: A = destination r/m, B = source register,
+       shift count is in `imm`. */
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_GPR; out->b_idx = reg | (rexR << 3);
+    if (opcode == 0xa5 || opcode == 0xad) out->imm = 0;   /* count in CL */
+    out->illegal = 0;
+  }
+  if (op == Ops_POPCNT) {
+    out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
+    out->b_kind = rm_is_reg ? XK_GPR : XK_MEM; out->b_idx = rm | (rexB << 3);
+    out->illegal = 0;
+  }
+  if (op == Ops_MOVNTI) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_GPR; out->b_idx = reg | (rexR << 3);
+    out->illegal = 0;
+  }
+  if (op == Ops_LAR) {
+    out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
+    out->b_kind = rm_is_reg ? XK_GPR : XK_MEM; out->b_idx = rm | (rexB << 3);
+    out->opsz = 2;
+    out->illegal = 0;
+  }
+  if (op == Ops_RDRAND || op == Ops_RDSEED || op == Ops_RDFSBASE ||
+      op == Ops_RDGSBASE || op == Ops_WRFSBASE || op == Ops_WRGSBASE) {
+    out->a_kind = XK_GPR; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->illegal = 0;
+  }
+  if (op == Ops_XSAVES || op == Ops_XSAVEC || op == Ops_XRSTORS ||
+      op == Ops_LKGS) {
+    out->a_kind = XK_MEM; out->b_kind = XK_NONE;
+    out->illegal = 0;
+  }
+  if (op == Ops_PREFETCH) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM;
+    out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->illegal = 0;
+  }
+  if (op == Ops_LLDT || op == Ops_VERR || op == Ops_VERW) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM;
+    out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->opsz = 2;
+    out->memsz = 2;
+    out->illegal = 0;
+  }
+  if (op == Ops_BSWAP) {
+    out->a_kind = XK_GPR; out->a_idx = opLow3 | (rexB << 3); out->b_kind = XK_NONE;
+    out->illegal = 0;
+  }
+  if (op == Ops_SGDT || op == Ops_SIDT || op == Ops_SMSW || op == Ops_LMSW ||
+      op == Ops_SLDT || op == Ops_STR) {
+    out->a_kind = rm_is_reg ? XK_GPR : XK_MEM;
+    out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->opsz = 2;                 /* these all read/write a 16-bit word */
+    out->memsz = 2;
+    out->illegal = 0;
   }
   if (op == Ops_LTR) {
 
@@ -977,6 +1115,21 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   int bad_sse = is_xmm && (op == Ops_SIMD_PAND || op == Ops_SIMD_POR || op == Ops_SIMD_PXOR ||
                            op == Ops_SIMD_PADDD || op == Ops_SIMD_PSUBD || op == Ops_MOVDQ ||
                            op == Ops_MOVQ) && !(p66 || rep == 1);
+  /* Legacy high-byte registers: without REX, ModRM reg codes 4..7 name
+     AH/CH/DH/BH instead of SPL/BPL/SIL/DIL. Mark them as indices 16..19 so
+     the executor reads/writes bits 8..15. */
+  if (!rex_valid) {
+    int a_byte = (out->opsz == 1);
+    int b_byte = (out->opsz == 1);
+    if (op == Ops_MOVZX || op == Ops_MOVSX || op == Ops_MOVSXD) {
+      a_byte = 0;
+      b_byte = (out->memsz == 1);
+    }
+    if (a_byte && out->a_kind == XK_GPR && out->a_idx >= 4 && out->a_idx <= 7)
+      out->a_idx = (uint8_t)(out->a_idx + 12);  /* 4..7 -> 16..19 (AH/CH/DH/BH) */
+    if (b_byte && out->b_kind == XK_GPR && out->b_idx >= 4 && out->b_idx <= 7)
+      out->b_idx = (uint8_t)(out->b_idx + 12);  /* 4..7 -> 16..19 (AH/CH/DH/BH) */
+  }
   out->illegal = is3 || overflow || inst_len > 15 || op == Ops_UNDEF ||
                  (op == Ops_MOVSXD && !rexW) ||
                  (op == Ops_MOV_CR && !rm_is_reg) ||

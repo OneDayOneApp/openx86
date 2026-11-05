@@ -13,6 +13,8 @@ void difftest_init(int port) {
   (void)port;
   xemu_reset();
   skip_ref = 0;
+  /* Match the RTL's trap-frame model (see xemu_trap_frame_compat). */
+  xemu_trap_frame_compat = 1;
 }
 
 void difftest_memcpy(uint64_t addr, void *buf, size_t n, int direction) {

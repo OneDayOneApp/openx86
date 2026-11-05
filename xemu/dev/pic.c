@@ -58,15 +58,17 @@ int xemu_pic_out(uint32_t off, int size, uint64_t val) {
 
   if (reg == 0) {
     if (b & 0x10) {                   /* ICW1: start initialization */
+      /* ICW1 does not touch the interrupt mask: the IMR keeps whatever
+         state it had until OCW1 is written. Clearing it here unmasked every
+         line during the kernel's ICW1..ICW4 sequence, which delivered IRQ0
+         into an IDT entry that was not installed yet. */
       p->icw1 = b;
       p->init_step = 1;
-      p->imr = 0;
       p->isr = 0;
-      p->irr = 0;
       return 0;
     }
     if ((b & 0x18) == 0x00) {         /* OCW2: EOI */
-      uint8_t level = (b >> 3) & 7;
+      uint8_t level = b & 7;          /* OCW2 level field is bits 2:0 */
       if (b & 0x20) {
         if (b & 0x04) p->isr &= (uint8_t)~(1u << level);
         else          p->isr = 0;     /* specific/rotate EOI fallback */

@@ -18,3 +18,7 @@ void xemu_reset(void) {
   xemu_pic_reset();
   xemu_pit_reset();
 }
+
+/* Serial-console stop marker (see --serial-stop in main.c). */
+const char *xemu_serial_stop = NULL;
+int xemu_serial_stopped = 0;
