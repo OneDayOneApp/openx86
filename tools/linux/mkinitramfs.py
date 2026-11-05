@@ -26,7 +26,8 @@ Usage::
 The default mode (no ``--shell``) is the original libc-free ``/init`` above.
 With ``--shell`` the image is an interactive busybox system instead: ``/init``
 is a shell script that mounts the pseudo filesystems, prints the banner
-``XEMU-SHELL-READY`` and execs an interactive ``sh`` on ``/dev/ttyS0``.  That
+``XEMU-SHELL-READY`` and execs an interactive ``sh`` on the kernel
+console fds.  That
 mode needs a static x86_64 busybox (``tools/linux/fetch_busybox.sh``) but no
 cross compiler, so it works directly on macOS.
 

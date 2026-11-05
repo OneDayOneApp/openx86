@@ -42,6 +42,9 @@ CASES = [
     # flushes this way after fork write-protects the parent's COW pages); a
     # stale writable translation must not bypass the new read-only PTE.
     ("t76_cr3_flush", 0x76),
+    # L3: an indirect JMP whose memory operand faults must leave the #PF
+    # handler RIP intact (the load's 0 must not be written to RIP).
+    ("t77_jmp_fault", 0x77),
 ]
 
 

@@ -1,3 +1,76 @@
+## Unreleased — fork/COW、SSE 逻辑运算、串口输入不再阻塞
+
+### 修复
+
+- **同值 CR3 重载必须刷新 TLB**：x86 规定写 CR3 即刷新 TLB（即使值不变），
+  Linux 依赖这一点 —— `dup_mmap()` 把父进程 COW 页写保护后调用
+  `flush_tlb_mm(oldmm)`，最终执行 `native_write_cr3(__native_read_cr3())`。
+  XEMU 只在 CR3 值变化时刷新，父进程于是继续用可写的陈旧翻译直接写进与
+  子进程共享的物理页；子进程 COW 拷贝到被污染的栈，busybox fork 包装的
+  `ret` 弹出 1 → `segfault at 1 ip 1`。现在任何 CR3 写都刷新 TLB。
+  新回归 `t76_cr3_flush`（0x76）。
+- **SSE 逻辑运算与字重排**：`andps/andnps/orps/xorps`（0F 54–57）与
+  `pshufhw/pshuflw`（F3/F2 0F 70）原先能解码但 sse.c 没有实现，任何用到
+  它们的程序都会 `unsupported op=8x`（busybox `ls` 的第一条路径就是
+  `xorps %xmm0,%xmm0`）。同时修掉 `pshufh[lw]` 写 `Vec128.w[4..7]` 的越界。
+- **串口输入不再阻塞**：`xemu_uart_poll()` 一次性把 stdin 设为非阻塞。
+  原先一旦客户机打开接收中断而宿主没有输入，整个模拟器就阻塞在 `read(2)`，
+  表现为启动到一半"卡住"（banner 永远不出现）。
+
+### 交互式 shell 实测
+
+```
+/ # ls /bin
+[         date      halt      mkdir     pwd       sort      uname
+ash       df        head      mknod     reboot    sync      vi
+busybox   echo      kill      mount     sed       test      whoami
+cat       false     less      mv        setsid    touch
+chmod     free      ln        poweroff  sh        true
+cp        grep      ls        ps        sleep     umount
+/ # poweroff -f
+reboot: System halted
+```
+
+`make xemu-shell-test`：banner → `/ #` 提示符 → `echo XEMU-ECHO-OK` 输出 →
+`poweroff -f` 关机，**PASS**（约 15 s）。
+
+- **间接 `JMP` 的故障原子性**：`xemu.rip = read_op(d,1,8)` 在操作数取数
+  缺页时会把 `xemu_raise_exc()` 刚装好的处理程序 RIP 覆盖成 `ld()` 返回的 0
+  —— 于是 CPU 以处理程序 CS 去取线性地址 0，且因为真正的处理程序没跑、
+  `SWAPGS` 没执行，GS 还是用户基址，oops 就表现为
+  `RIP=0 / RSP=入口 trampoline 栈 / GS=0`。
+  busybox 的 `jmpq *0x4e62d0(,%rax,8)` 跳表页正好是首次按需分页，
+  所以管道场景必现。`CALL`/`RET`/`IRET` 早已检查 `fault_pending`，只漏了
+  `JMP`。新回归 `t77_jmp_fault`（0x77）。
+
+### 交互式 shell 实测（完整 L4 验收）
+
+```
+XEMU-SHELL-READY
+/ # echo XEMU-ECHO-OK
+XEMU-ECHO-OK
+/ # ls /bin
+[         date      halt      mkdir     pwd       sort      uname
+ash       df        head      mknod     reboot    sync      vi
+...
+/ # cat /proc/cpuinfo | head -3
+processor       : 0
+vendor_id       : X86-KMH-Core
+cpu family      : 6
+/ # poweroff -f
+reboot: System halted
+```
+
+`make xemu-shell-test` 覆盖：banner → `/ #` → `echo` → `ls /` →
+`cat /proc/cpuinfo` → `cat /proc/cpuinfo | head -3`（两个 fork 出来的 applet
+之间的管道）→ `poweroff -f`，**PASS**（约 11 s）。
+
+### 已知限制
+
+- ash 在真实 tty 上会发 `ESC[6n` 光标查询并等待终端应答；真实终端会自动
+  应答，纯管道 harness 需要在看到查询后回 `ESC[1;1R`（`shell_test.py` 已实现）。
+- 串口 FIFO 只有 1 字节，输入速率受 `xemu_uart_poll` 每 1024 条指令一次限制。
+
 ## Unreleased — L4：交互式 busybox shell
 
 在最小 Linux 6.6.60 + busybox（static musl）initramfs 下，XEMU 现在能跑到

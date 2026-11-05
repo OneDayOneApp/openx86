@@ -692,8 +692,17 @@ int xemu_exec(const XemuInst *d) {
       if (cond_true(d->cond)) write_reg(d->a_idx, read_op(d, 0, sz), sz);
       break;
     case Ops_JMP:
-      xemu.rip = (d->b_kind == XK_IMM) ? (xemu.rip + d->len + (uint64_t)d->imm)
-                                       : read_op(d, 1, 8);
+      if (d->b_kind == XK_IMM) {
+        xemu.rip = xemu.rip + d->len + (uint64_t)d->imm;
+      } else {
+        /* An indirect jump through an unmapped address raises #PF inside the
+           read.  xemu_raise_exc() has already installed the handler in RIP;
+           storing the 0 returned by the faulting load would overwrite it and
+           fetch from linear address 0 in kernel mode. */
+        uint64_t tgt = read_op(d, 1, 8);
+        if (xemu_fault_pending) return 0;
+        xemu.rip = tgt;
+      }
       return 0;
     case Ops_JCC:
       if (cond_true(d->cond)) { xemu.rip += d->len + (uint64_t)d->imm; return 0; }

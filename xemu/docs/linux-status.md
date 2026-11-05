@@ -16,7 +16,10 @@
 | `emu-test` / `make emu-regress` | 37/37 ✅ |
 | **`make xemu-linux-test`（T4）** | **PASS ✅ 真实 Linux 6.6.60 跑到用户态 `/init` 并完成** |
 | **交互式 busybox shell** | **✅ 手动验证：banner + `/ #` 提示符 + `echo` 内建命令 + `poweroff`** |
-| fork 子进程 | ❌ 子进程在 exec 前 `segfault at 1 ip 1`（用户态 `ret` 弹出 1） |
+| fork 子进程 | ✅ 已修（同值 CR3 重载未刷 TLB → 父进程写穿 COW 页）；`ls /bin` 正常 |
+| `make xemu-shell-test` | ✅ PASS（banner/提示符/echo/poweroff，约 15 s） |
+| 管道组合命令（`cat /proc/cpuinfo | head -3`） | ✅ 已修（间接 `JMP` 缺页时覆盖处理程序 RIP） |
+| `make xemu-shell-test`（T5，完整 L4 验收） | ✅ PASS（echo / ls / cat / 管道 / poweroff，约 11 s） |
 
 `make xemu-linux-test` 实测串口输出：
 

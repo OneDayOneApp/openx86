@@ -4,15 +4,24 @@
 文档：[计划](docs/plan.md)、[路线图](docs/roadmap.md)、[Linux 启动计划](docs/linux-plan.md)、
 [Linux 测试计划](docs/linux-testplan.md)、**[Linux 实测状态](docs/linux-status.md)**。
 
-## 现状：能启动真实 Linux（2026-11-05）
+## 现状：能启动真实 Linux 并进入交互式 shell（2026-11-05）
 
 `make xemu-linux-test` 全绿：Linux 6.6.60 走 64 位引导协议，进入用户态
 `/init` 并完成关机流程。
 
 ```
 Run /init as init process
-XEMU: /init running as pid 1
-XEMU: initramfs mounted, shutting down
+...
+XEMU-SHELL-READY
+/ # ls /bin
+[         date      halt      mkdir     pwd      sort    uname
+ash       df        head      mknod     reboot   sync    vi
+...
+/ # cat /proc/cpuinfo | head -3
+processor       : 0
+vendor_id       : X86-KMH-Core
+cpu family      : 6
+/ # poweroff -f
 reboot: System halted
 ```
 
@@ -23,13 +32,15 @@ reboot: System halted
 | `make xemu-decode-test`（长度+字段） | 693/693 + 693/693 |
 | `make emu-test`（DUT vs XEMU 逐指令） | 37/37 |
 | `make sys-lockstep-test`（系统逐指令） | 10/10 |
-| `make xemu-dev-test`（XEMU 专属系统/设备测试） | 9/9 |
+| `make xemu-dev-test`（XEMU 专属系统/设备测试） | 17/17 |
+| `make xemu-shell-test`（T5：交互式 busybox shell，含 applet 管道） | ✅ PASS |
 
 ```bash
 make xemu-linux-runner          # build/xemu-linux（512 MiB RAM）
 tools/linux/build_kernel.sh     # 交叉编译最小内核（Docker）
 tools/linux/mkinitramfs.py      # 生成 initramfs
-make xemu-linux-test            # T4 门禁
+make xemu-linux-test            # T4 门禁（启动到 /init）
+make xemu-shell-test            # T5 门禁（交互式 shell：echo/ls/cat/管道/poweroff）
 make xemu-isa-scan IMAGE=build/linux/vmlinux   # 静态扫描未实现指令
 ```
 

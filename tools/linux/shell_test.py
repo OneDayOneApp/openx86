@@ -1,44 +1,38 @@
 #!/usr/bin/env python3
 """T5 gate: drive the interactive busybox shell on the XEMU serial console.
 
-WHAT RUNS TODAY
----------------
 The shell initramfs (``mkinitramfs.py --shell``) mounts /proc, /sys and /dev,
 prints the banner ``XEMU-SHELL-READY``, and execs an interactive busybox
-``sh`` on ``/dev/ttyS0`` (falling back to the kernel-provided console fds).
-This test proves the console is interactive: banner + prompt, then a real
-command typed into the serial port whose output comes back, then a clean end.
+``sh`` as pid 1 on the kernel-provided console fds (``/dev/console``, which
+is ttyS0 because of ``console=ttyS0``).
 
-    banner:  XEMU-SHELL-READY
-    prompt:  / #
-    command: echo XEMU-ECHO-OK     ->  XEMU-ECHO-OK
-    end:     exit                  ->  "Attempted to kill init" (pid 1 exits)
+The test is a black-box serial-console driver::
 
-The first command line is written about one second after the emulator starts
-(not immediately) and before waiting for the banner.  This is required and
-matches what a human at the console does: xemu_uart_poll() reads host stdin
-with a blocking read(2) once the guest has enabled 8250 receive interrupts.
-If the first byte arrives while the kernel is still initialising the serial
-port, the whole emulator sleeps inside read(2) and userspace never reaches
-the banner.  A short delay reproduces interactive typing and avoids the
-race.
+    banner:   XEMU-SHELL-READY
+    prompt:   / #
+    commands: echo XEMU-ECHO-OK          ->  XEMU-ECHO-OK
+              ls /                       ->  bin init proc ...
+              cat /proc/cpuinfo          ->  processor : 0 / vendor_id : ...
+    end:      poweroff -f                ->  reboot: System halted
 
-FORKED APPLETS ARE CURRENTLY BROKEN (EMULATOR BUG)
---------------------------------------------------
-Commands that need a child process (``ls``, ``cat``, ``mount``, ``poweroff``,
-``setsid``, ...) fail before exec: XEMU's forked children return to RIP=1 and
-the kernel logs
+``ls`` and ``cat`` are real fork+exec applets, so they also cover process
+creation and /proc.  ``cat /proc/cpuinfo | head -3`` (the exact L4 wording) is
+part of the default flow: a pipe between two forked applets works since
+indirect CALL/JMP no longer clobber the #PF handler RIP when their operand
+load faults.
 
-    init[16]: segfault at 1 ip 0000000000000001 sp 00007ffe35f3d320 error 14
-              in busybox[400000+112000] likely on CPU 0 (core 0, socket 0)
+Cursor-position queries (DSR)
+-----------------------------
+busybox ash's line editor emits ``ESC[6n`` right after a prompt and waits for
+the terminal's cursor-position reply.  A *human* running this by hand gets
+that reply from their terminal emulator; a bare pipe does not.  This harness
+answers every query with ``ESC[1;1R`` (see ``Console.answer_dsr``), so typed
+commands are never swallowed as a partial DSR reply.  If you drive the shell
+with a different script, send that reply (or disable the line editor) too.
 
-The faulting user ``ret`` pops the value 1 from the stack (a fork/COW
-stack-frame bug in the emulator, tracked separately).  Shell *builtins*
-(echo, exit, cd, ...) work because they do not fork.  The real ``ls /`` /
-``cat /proc/cpuinfo | head -3`` / ``poweroff -f`` assertions are therefore
-gated behind ``--with-forked-commands`` (default off); they are the acceptance
-criteria once the fork bug is fixed.  ``--with-forked-commands`` currently
-fails fast with the console log, which is the intended diagnostic.
+The first command is sent only after the banner and prompt are visible; the
+8250 model's stdin poll is non-blocking now, so no input has to be preloaded
+to keep the emulator from freezing.
 
 Exit status is 0 only when every enabled check passes.  The complete serial
 log is always written to ``build/linux/shell-test.log`` and printed.
@@ -61,34 +55,56 @@ LOG = os.path.join(ROOT, "build", "linux", "shell-test.log")
 
 BANNER = b"XEMU-SHELL-READY"
 PROMPT_RE = re.compile(rb"(?m)^(?:/|~) # ")
+# busybox ls emits SGR colour sequences on a tty; compare on plain text.
+ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
 
-# Commands that only use shell builtins: safe while the fork bug exists.
-BUILTIN_COMMANDS = [
+# busybox ash's line editor asks the terminal for the cursor position right
+# after a prompt (ESC[6n).  A real terminal answers ESC[row;colR; the harness
+# does that so typed commands are not consumed as a partial DSR reply.
+DSR_QUERY = b"\x1b[6n"
+DSR_REPLY = b"\x1b[1;1R"
+
+
+def plain(data):
+    return ANSI_RE.sub(b"", data)
+
+# Interactive commands typed at the serial console.  ``ls`` and ``cat`` need
+# fork+exec; they work now that the emulator's fork/COW TLB bug is fixed.
+COMMANDS = [
     (
         "echo XEMU-ECHO-OK",
         lambda s: re.search(rb"\r*\nXEMU-ECHO-OK\r*\n", s) is not None,
         "output line XEMU-ECHO-OK",
     ),
-]
-
-# Acceptance commands that need fork+exec; enabled by --with-forked-commands.
-FORKED_COMMANDS = [
     (
         "ls /",
-        lambda s: all(re.search(rb"(?<![A-Za-z0-9_.-])" + n + rb"(?![A-Za-z0-9_.-])", s)
-                      for n in (b"bin", b"init", b"proc")),
+        lambda s: all(n in plain(s) for n in (b"bin", b"init", b"proc")),
         "listing with bin/init/proc",
     ),
     (
+        "cat /proc/cpuinfo",
+        lambda s: b"processor" in plain(s) and b"vendor_id" in plain(s),
+        "processor + vendor_id",
+    ),
+]
+
+# The exact acceptance pipeline from the original L4 wording.  It is not in
+# the default flow yet: with the current emulator a pipe between two forked
+# applets (`cat ... | head -3`) hangs before head can drain it, and a later
+# prompt can then surface an oops with RIP=0.  Enable with --with-pipeline
+# once that is fixed; `cat`/`head` individually work.
+PIPELINE_COMMANDS = [
+    (
         "cat /proc/cpuinfo | head -3",
-        lambda s: b"processor" in s and (b"vendor_id" in s or b"model name" in s),
+        lambda s: b"processor" in plain(s) and
+                  (b"vendor_id" in plain(s) or b"model name" in plain(s)),
         "processor + vendor_id/model name",
     ),
 ]
 
-# A clean end for the builtin-only run: `exit` as pid 1 panics the kernel
-# (which is a visible, deterministic terminal state).  A real poweroff would
-# print "reboot: System halted" instead.
+# Deterministic end states: `poweroff -f` prints "reboot: System halted";
+# `exit` as pid 1 makes the kernel panic ("Attempted to kill init").  Either
+# counts as the session having ended.
 END_MARKERS = (
     b"Attempted to kill init",
     b"reboot: System halted",
@@ -101,6 +117,7 @@ class Console:
     def __init__(self, proc):
         self.proc = proc
         self.log = bytearray()
+        self.dsr_answered = 0
 
     def drain(self, timeout=0.1):
         """Read whatever is available within `timeout`; return False on EOF."""
@@ -111,7 +128,19 @@ class Console:
         if not chunk:
             return False
         self.log += chunk
+        self.answer_dsr()
         return True
+
+    def answer_dsr(self):
+        """Reply to every new ESC[6n cursor-position query from the shell."""
+        n = bytes(self.log).count(DSR_QUERY)
+        while self.dsr_answered < n:
+            try:
+                self.proc.stdin.write(DSR_REPLY)
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                return
+            self.dsr_answered += 1
 
     def wait_for(self, predicate, deadline, label, keepalive=False):
         """Pump the serial output until predicate(log) or deadline.
@@ -143,6 +172,13 @@ class Console:
         ok = predicate(bytes(self.log))
         return ok, (None if ok else "timed out waiting for " + label)
 
+    def settle(self, seconds=0.25):
+        """Let pending prompt/DSR output arrive and answer it before typing."""
+        end = time.time() + seconds
+        while time.time() < end:
+            self.drain(0.1)
+        self.answer_dsr()
+
     def send(self, line):
         self.proc.stdin.write(line.encode() + b"\n")
         self.proc.stdin.flush()
@@ -159,10 +195,12 @@ def main():
     ap.add_argument("--banner-timeout", type=float, default=240.0)
     ap.add_argument("--command-timeout", type=float, default=90.0)
     ap.add_argument("--halt-timeout", type=float, default=60.0)
+    ap.add_argument("--with-pipeline", action="store_true", default=True,
+                    help="also require the exact `cat /proc/cpuinfo | head -3` "
+                         "pipeline (currently hangs in XEMU; cat/head each work)")
+    # Kept so existing invocations do not break; ls/cat are now default.
     ap.add_argument("--with-forked-commands", action="store_true",
-                    help="also require ls /, cat /proc/cpuinfo and poweroff "
-                         "(these need fork+exec and currently hit the emulator "
-                         "fork bug; expected to fail until it is fixed)")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--log", default=LOG)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
@@ -203,15 +241,6 @@ def main():
             failure = f"{name}: {detail}"
 
     try:
-        # Give the kernel a moment to finish bringing up the 8250 before the
-        # first host byte is written.  Then preload the command: this is also
-        # what keeps xemu_uart_poll()'s blocking read(2) satisfied through the
-        # rest of userspace startup, exactly like a human typing at the
-        # console would.
-        time.sleep(1.0)
-        first_line, first_check, first_desc = BUILTIN_COMMANDS[0]
-        con.send(first_line)
-
         # ---- 1. banner ----------------------------------------------------
         dl = start + args.banner_timeout
         ok, why = con.wait_for(lambda s: BANNER in s, dl, "banner")
@@ -225,42 +254,30 @@ def main():
                                "shell prompt")
         record(ok, "prompt", "'/ #'" if ok else (why or "prompt missing"))
 
-        # ---- 3. builtin command sent over the serial port -----------------
-        # It was preloaded before the banner; if the shell somehow did not
-        # run it, send it again now and check the bytes appended afterwards.
-        for i, (line, check, desc) in enumerate(BUILTIN_COMMANDS):
-            if i == 0 and check(bytes(con.log)):
-                record(True, line, desc)
-                continue
+        # ---- 3. commands typed over the serial console --------------------
+        commands = list(COMMANDS)
+        if args.with_pipeline:
+            commands += PIPELINE_COMMANDS
+        for i, (line, check, desc) in enumerate(commands):
+            con.settle()
             before = len(con.log)
             con.send(line)
             dl = min(time.time() + args.command_timeout,
                      start + args.banner_timeout + (i + 1) * args.command_timeout)
             ok, why = con.wait_for(
-                lambda s, before=before, check=check: check(s[before:]),
+                lambda s, before=before, check=check: check(plain(s[before:])),
                 dl, desc)
             record(ok, line, desc if ok else (why or "expected output missing"))
 
-        # ---- 4. optional fork-dependent acceptance commands ----------------
-        if args.with_forked_commands:
-            for i, (line, check, desc) in enumerate(FORKED_COMMANDS):
-                before = len(con.log)
-                con.send(line)
-                dl = time.time() + args.command_timeout
-                ok, why = con.wait_for(
-                    lambda s, before=before, check=check: check(s[before:]),
-                    dl, desc)
-                record(ok, line, desc if ok else (why or "expected output missing"))
-
-        # ---- 5. end the session ------------------------------------------
-        # Prefer a real poweroff (it works and prints "reboot: System halted"
-        # in the current tree); if it does not take, fall back to the shell
-        # builtin `exit`, which makes pid 1 exit ("Attempted to kill init").
+        # ---- 4. end the session ------------------------------------------
+        con.settle()
         con.send("poweroff -f")
         end_pred = lambda s: any(m in s for m in END_MARKERS)
         dl = time.time() + min(args.halt_timeout, 20.0)
         ok, _ = con.wait_for(end_pred, dl, "poweroff")
         if not ok:
+            # `exit` is a builtin; pid 1 exiting panics the kernel, which is
+            # still a deterministic end state.
             con.send("exit")
             dl = time.time() + args.halt_timeout
             ok, why = con.wait_for(end_pred, dl, "exit")
@@ -300,7 +317,7 @@ def main():
             print("---- end serial console ----")
         for ok, name, detail in results:
             print(f"{'PASS' if ok else 'FAIL'}  {name:<28} {detail}")
-        mode = "builtin-only" if not args.with_forked_commands else "forked-commands"
+        mode = "with-pipeline" if args.with_pipeline else "default"
         print(f"\nshell: {'PASS' if failure is None else 'FAIL'}  "
               f"{mode}  {elapsed:.1f}s  log={os.path.relpath(logpath, ROOT)}")
         if failure is not None:
