@@ -45,6 +45,60 @@ static void wr32(uint8_t *p, uint32_t v) {
 }
 static void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 
+/* Build the zero page (boot_params) at ZERO_PAGE and the command line.
+ *
+ * Both entry paths need this: ELF vmlinux jumps straight to startup_64, and
+ * the bzImage path also needs the setup header fields. `src` is the bzImage
+ * header (may be NULL for a pre-decompressed vmlinux) and `load_addr` the
+ * address the kernel image was placed at.
+ */
+static void write_boot_params(const uint8_t *src, uint64_t load_addr,
+                              const char *cmdline) {
+  uint8_t zp[4096];
+  memset(zp, 0, sizeof(zp));
+
+  wr16(zp + O_BOOT_FLAG, 0xAA55);
+  memcpy(zp + O_HEADER, "HdrS", 4);
+  zp[O_SETUP_SECTS] = (src && src[O_SETUP_SECTS]) ? src[O_SETUP_SECTS] : 4;
+  zp[O_TYPE_LOADER] = 0xFF;                    /* undefined loader */
+  zp[O_LOADFLAGS] = src ? (uint8_t)(src[O_LOADFLAGS] | 0x80) : 0x81;
+  if (src) {
+    wr16(zp + O_VERSION, rd16(src + O_VERSION));
+    wr32(zp + O_KERNEL_ALIGN, rd32(src + O_KERNEL_ALIGN));
+    zp[O_RELOCATABLE] = src[O_RELOCATABLE];
+    wr16(zp + O_XLOADFLAGS, rd16(src + O_XLOADFLAGS));
+    wr32(zp + O_INIT_SIZE, rd32(src + O_INIT_SIZE));
+  } else {
+    wr16(zp + O_VERSION, 0x020f);
+    wr32(zp + O_KERNEL_ALIGN, 0x200000);
+    zp[O_RELOCATABLE] = 1;
+    wr16(zp + O_XLOADFLAGS, 0x7f);
+  }
+  wr32(zp + O_CODE32_START, (uint32_t)load_addr);
+  wr32(zp + O_CMDLINE_PTR, (uint32_t)CMDLINE_ADDR);
+  wr32(zp + O_CMDLINE_SIZE, 2048);
+  wr32(zp + O_INITRD_MAX, 0x37FFFFFF);
+
+  struct { uint64_t addr, size; uint32_t type; } map[] = {
+    {0x0, 0x9FC00, 1},
+    {0x9FC00, 0xA0000 - 0x9FC00, 2},
+    {0xF0000, 0x100000 - 0xF0000, 2},
+    {0x100000, XEMU_MEM_SIZE - 0x100000, 1},
+  };
+  int nent = (int)(sizeof(map) / sizeof(map[0]));
+  zp[O_E820_ENTRIES] = (uint8_t)nent;
+  uint8_t *p = zp + O_E820_TABLE;
+  for (int i = 0; i < nent; i++) {
+    for (int b = 0; b < 8; b++) p[b] = (uint8_t)(map[i].addr >> (8 * b));
+    for (int b = 0; b < 8; b++) p[8 + b] = (uint8_t)(map[i].size >> (8 * b));
+    wr32(p + 16, map[i].type);
+    p += 20;
+  }
+
+  xemu_mem_write(ZERO_PAGE, zp, sizeof(zp));
+  xemu_mem_write(CMDLINE_ADDR, cmdline, strlen(cmdline) + 1);
+}
+
 /* Build the 4-level identity map the kernel's early boot expects and turn on
  * long mode: PML4[0] -> PDPT, PDPT[0] -> PD, PD[0..N] = 2MiB pages covering
  * all of RAM, plus a scratch page at the halt-MMIO address so a stray store
@@ -122,7 +176,8 @@ int xemu_boot_kernel(const char *path, const char *cmdline) {
   if (n > 4 && memcmp(img, "\177ELF", 4) == 0) {
     uint64_t entry = 0;
     if (load_elf(img, n, &entry) != 0) { free(img); return -1; }
-    xemu.gpr[6] = ZERO_PAGE;
+    write_boot_params(NULL, entry, cmdline);
+    xemu.gpr[6] = ZERO_PAGE;          /* %rsi = boot_params */
     xemu.gpr[4] = 0x9F000;
     xemu.rip = entry;
     /* Linux's startup_64 expects to run with long mode already active and
@@ -169,43 +224,7 @@ int xemu_boot_kernel(const char *path, const char *cmdline) {
     return -1;
   }
 
-  /* Zero page. */
-  uint8_t zp[4096];
-  memset(zp, 0, sizeof(zp));
-  wr16(zp + O_BOOT_FLAG, 0xAA55);
-  memcpy(zp + O_HEADER, "HdrS", 4);
-  wr16(zp + O_VERSION, rd16(img + O_VERSION));
-  zp[O_SETUP_SECTS] = setup_sects;
-  zp[O_TYPE_LOADER] = 0xFF;                  /* undefined loader */
-  zp[O_LOADFLAGS] = (uint8_t)(img[O_LOADFLAGS] | 0x80);
-  wr32(zp + O_CODE32_START, load_addr);
-  wr32(zp + O_CMDLINE_PTR, (uint32_t)CMDLINE_ADDR);
-  wr32(zp + O_KERNEL_ALIGN, rd32(img + O_KERNEL_ALIGN));
-  zp[O_RELOCATABLE] = img[O_RELOCATABLE];
-  wr16(zp + O_XLOADFLAGS, xloadflags);
-  wr32(zp + O_CMDLINE_SIZE, 2048);
-  wr32(zp + O_INIT_SIZE, init_size);
-  wr32(zp + O_INITRD_MAX, 0x37FFFFFF);
-
-  /* e820 map. */
-  struct { uint64_t addr, size; uint32_t type; } map[] = {
-    {0x0, 0x9FC00, 1},
-    {0x9FC00, 0xA0000 - 0x9FC00, 2},
-    {0xF0000, 0x100000 - 0xF0000, 2},
-    {0x100000, XEMU_MEM_SIZE - 0x100000, 1},
-  };
-  int nent = (int)(sizeof(map) / sizeof(map[0]));
-  zp[O_E820_ENTRIES] = (uint8_t)nent;
-  uint8_t *p = zp + O_E820_TABLE;
-  for (int i = 0; i < nent; i++) {
-    for (int b = 0; b < 8; b++) p[b] = (uint8_t)(map[i].addr >> (8 * b));
-    for (int b = 0; b < 8; b++) p[8 + b] = (uint8_t)(map[i].size >> (8 * b));
-    wr32(p + 16, map[i].type);
-    p += 20;
-  }
-
-  xemu_mem_write(ZERO_PAGE, zp, sizeof(zp));
-  xemu_mem_write(CMDLINE_ADDR, cmdline, strlen(cmdline) + 1);
+  write_boot_params(img, load_addr, cmdline);
 
   xemu.gpr[6] = ZERO_PAGE;                          /* %rsi = boot_params */
   xemu.gpr[4] = 0x9F000;                            /* stack below the EBDA */

@@ -160,7 +160,9 @@ int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *acces
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   uint8_t gate[16];
   uint64_t base = xemu.idtr_base + vec * 16;
-  if (xemu_mem_read(base, gate, 16) != 0) {
+  /* The IDT is addressed virtually when paging is on. Fall back to a physical
+   * read so test images that never build a mapping for the IDT still work. */
+  if (xemu_vread(base, gate, 16) != 0 && xemu_mem_read(base, gate, 16) != 0) {
     fprintf(stderr, "[xemu] IDT read fault for vector %llu at 0x%llx\n",
             (unsigned long long)vec, (unsigned long long)base);
     xemu.halted = 1;

@@ -46,7 +46,13 @@ static void write_reg(int idx, uint64_t val, int sz) {
 }
 
 uint64_t xemu_ea(const XemuInst *d) {
-  if (d->rip_rel) return xemu.rip + d->len + (uint64_t)d->disp;
+  if (d->rip_rel) {
+    uint64_t a = xemu.rip + d->len + (uint64_t)d->disp;
+    /* FS/GS overrides add their base even for RIP-relative operands. */
+    if (d->seg_ovr == 5) a += xemu.fs_base;
+    else if (d->seg_ovr == 6) a += xemu.gs_base;
+    return a;
+  }
   uint64_t a = 0;
   if (d->has_base) a += xemu.gpr[d->base];
   if (d->has_index) a += xemu.gpr[d->index] << d->scale;

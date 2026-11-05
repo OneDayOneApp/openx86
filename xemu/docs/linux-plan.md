@@ -46,7 +46,7 @@
 | 中断 | 仅内部 timer 注入 IRQ32（非 8259 链路） |
 | 端口 IO | **无** |
 | 设备 | 仅 timer + halt MMIO |
-| x87 | **无**（含 FXSAVE/FXRSTOR） |
+| x87 | 最小集（`FNINIT`/`FLD`/`FST`/算术/比较/控制字），无 `FXSAVE`/`FXRSTOR` |
 
 ---
 
@@ -100,7 +100,30 @@
 
 ---
 
-### L2 — x87 与上下文切换（1–1.5 周）
+### L1 进展（已在主干）
+
+真实内核已经能进入 `startup_64`：
+
+```bash
+make XEMU_MEM_MB=512 xemu-bin
+./build/xemu --kernel vmlinux --cmdline="console=ttyS0" -b --max-steps=50000000
+```
+
+已实现的关键项：
+
+| 项 | 说明 |
+| --- | --- |
+| ELF 加载 | 按 `p_paddr` 映射 `PT_LOAD`；跳过内核内解压器（解释器速度下要数十亿条） |
+| 长模式前置 | 引导器先建好 4 级恒等页表并置 `CR0.PG`；`startup_64` 只写 CR4/CR3 |
+| `AL/eAX, imm` 立即数 ALU | 0x04/05…0x3C/3D 共 16 条，原先完全缺失 |
+| x87 | `D8–DF` 分组解码 + 栈机实现，通过内核的 FPU 探测 |
+| 段覆盖 | `FS`/`GS` 参与有效地址计算；`WRMSR` 支持 FS/GS/kernel-GS base |
+| `MOV sreg`/`RETF`/`LEAVE`/`ENTER` | 内核早期切换与函数序言的必需项 |
+
+当前卡点：内核执行到 `native_write_cr0` 后触发 `UD2`，
+原因是 per-CPU 的 `GS` 基址还没建立（`setup_per_cpu_areas` 之前就访问了）。
+
+## L2 — x87 与上下文切换（1–1.5 周）
 
 **交付**
 

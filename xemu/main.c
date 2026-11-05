@@ -16,6 +16,7 @@ static unsigned mem_mb = 0;
 static int batch = 0;
 static int trace = 0;
 static int trace_cr = 0;
+static const char *watch_pc = NULL;
 static const char *dump_mem = NULL;
 static unsigned long steps;
 
@@ -71,6 +72,13 @@ static int step_once(void) {
             (unsigned long long)xemu.rip, inst.op,
             (unsigned long long)xemu.cr0, (unsigned long long)xemu.cr3,
             (unsigned long long)xemu.cr4, (unsigned long long)xemu.gpr[0]);
+  if (watch_pc) {
+    unsigned long long lo = 0, hi = 0;
+    if (sscanf(watch_pc, "%llx-%llx", &lo, &hi) == 2 &&
+        xemu.rip >= lo && xemu.rip < hi)
+      fprintf(stderr, "pc in [%llx,%llx): 0x%llx (first hit)\n", lo, hi,
+              (unsigned long long)xemu.rip);
+  }
   ring_add(xemu.rip, inst.op, inst.len);
   rc = xemu_exec(&inst);
   if (rc != 0) {
@@ -165,6 +173,8 @@ int main(int argc, char **argv) {
     else if (!strncmp(argv[i], "--max-steps=", 12)) max_steps = atoll(argv[i] + 12);
     else if (!strcmp(argv[i], "--trace")) trace = 1;
     else if (!strcmp(argv[i], "--trace-cr")) trace_cr = 1;
+    else if (!strcmp(argv[i], "--trace-port")) xemu_trace_port = 1;
+    else if (!strncmp(argv[i], "--watch-pc=", 11)) watch_pc = argv[i] + 11;
     else if (!strncmp(argv[i], "--dump-mem=", 11)) dump_mem = argv[i] + 11;
     else if (!strcmp(argv[i], "--kernel") && i + 1 < argc) kernel_path = argv[++i];
     else if (!strncmp(argv[i], "--cmdline=", 10)) cmdline = argv[i] + 10;
@@ -198,6 +208,9 @@ int main(int argc, char **argv) {
     monitor();
   }
   dump_mem_and_exit();
+  if (xemu_port_out_count)
+    fprintf(stderr, "xemu: %llu port writes\n",
+            (unsigned long long)xemu_port_out_count);
   printf("xemu: %s after %lu instructions, rip=0x%llx, exit=%llu\n",
          xemu.halted ? "halted" : "stopped", steps,
          (unsigned long long)xemu.rip, (unsigned long long)(xemu_exit_code & 0xff));
