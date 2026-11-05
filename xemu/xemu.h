@@ -29,7 +29,8 @@ enum {
 };
 
 /* Operand kinds mirror the RTL decoder: None/Gpr/Xmm/Mem/Imm. */
-enum { XK_NONE = 0, XK_GPR = 1, XK_XMM = 2, XK_MEM = 3, XK_IMM = 4 };
+enum { XK_NONE = 0, XK_GPR = 1, XK_XMM = 2, XK_MEM = 3, XK_IMM = 4, XK_SEG = 5,
+       XK_X87 = 6 };
 
 typedef struct {
   uint64_t gpr[16];
@@ -38,9 +39,9 @@ typedef struct {
   uint64_t cr0, cr2, cr3, cr4;
   uint64_t idtr_base;
   uint16_t idtr_limit;
-  uint64_t cs, ss;
+  uint64_t cs, ss, ds, es, fs, gs;
   uint64_t efer, star, lstar, sfmask;
-  uint64_t fs_base, gs_base;
+  uint64_t fs_base, gs_base, kernel_gs_base;
   /* P3: segmentation/TSS/privilege/interrupt state. */
   uint64_t gdtr_base;
   uint16_t gdtr_limit;
@@ -54,6 +55,7 @@ typedef struct {
   uint64_t timer_counter;
   uint64_t tsc;
   int halted;
+  int halted_cpu;   /* HLT executed; waiting for an interrupt */
   /* L0 devices */
   uint64_t iopl;
 } XemuState;
@@ -70,6 +72,7 @@ typedef struct {
   uint64_t imm;
   uint8_t imm_kind;
   uint8_t rep; /* 0 none, 1 F3, 2 F2 */
+  uint8_t seg_ovr;  /* 0 none, 1 ES, 2 CS, 3 SS, 4 DS, 5 FS, 6 GS */
   uint8_t port_imm; /* IN/OUT with imm8 port */
   uint8_t io_sz;    /* 1/2/4 for IN/OUT/INS/OUTS */
   int64_t disp;
@@ -121,6 +124,14 @@ void xemu_pit_tick(void);
 extern uint64_t xemu_pit_ips;
 int xemu_pic_ack(void);
 void xemu_after_inst(void);
+/* x87 */
+void xemu_fpu_reset(void);
+int xemu_fpu_exec(const XemuInst *d);
+uint16_t xemu_fpu_cw(void);
+uint16_t xemu_fpu_sw(void);
+uint16_t xemu_fpu_tag(void);
+/* Effective address of the ModRM memory operand (mem.c). */
+uint64_t xemu_ea(const XemuInst *d);
 extern int xemu_console_serial;
 extern uint64_t xemu_fault_err;
 extern uint64_t xemu_exit_code;
@@ -130,5 +141,7 @@ extern int xemu_fault_pending;
 int xemu_decode(uint64_t rip, XemuInst *out);
 /* Returns 0 on success, negative on fault. */
 int xemu_exec(const XemuInst *inst);
+/* Load a Linux bzImage and set up the entry state (see boot.c). */
+int xemu_boot_kernel(const char *path, const char *cmdline);
 
 #endif

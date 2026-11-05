@@ -1,3 +1,26 @@
+## Unreleased — L1：真实内核进入 startup_64
+
+### 新增
+
+- `--kernel FILE`：按 Linux x86 启动协议加载 bzImage 或 ELF vmlinux
+- ELF64 加载（`PT_LOAD` → `p_paddr`），跳过内核内解压器
+- 引导器预先建立 4 级恒等页表与 `CR0.PG`
+- x87 最小实现（`D8–DF` 分组解码、栈机、控制/状态字、四则、比较、`FNINIT`）
+- 段覆盖前缀（`FS`/`GS`）参与有效地址；`WRMSR` 写 FS/GS base
+- `MOV sreg`（`8C`/`8E`）、`RETF`（`CA`/`CB`）、`LEAVE`/`ENTER`
+
+### 修复
+
+- `AL/eAX, imm` 立即数 ALU 的 16 条指令（`04/05/0C/0D/…/3C/3D`）完全缺失
+- `LGDT`/`LIDT`/`RETF` 使用物理访问导致开页后越界，改为虚拟访问
+- `HLT` 不再视为程序结束（内核 idle 循环会执行 `HLT`）
+- `0F 22` 写 `CRn` 与 `0F 20` 读 `CRn` 的标志位区分
+
+### 性能
+
+- UART 输入轮询从"每条指令一次 `read()`"改为每 1024 条一次
+  （4000 万条指令：14s → 4.4s，约 9 MIPS）
+
 ## Unreleased — L0 设备模型
 
 ### 新增

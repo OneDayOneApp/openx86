@@ -162,6 +162,9 @@ emu-fuzz: emu
 
 # ---------------------------------------------------------------- XEMU (self-written reference model)
 XEMU_SO := build/ref/libxemu.so
+XEMU_MEM_MB ?= 16
+XEMU_DEFS := -DXEMU_MEM_SIZE_MB=$(XEMU_MEM_MB)
+
 XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c xemu/main.c,$(wildcard xemu/*.c)) \
             $(wildcard xemu/dev/*.c)
 
@@ -170,12 +173,12 @@ xemu-so: $(XEMU_SO)
 
 $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
 	@mkdir -p build/ref
-	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared \
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared $(XEMU_DEFS) \
 	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
 build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h
 	@mkdir -p build
-	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
+	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra $(XEMU_DEFS) \
 	  $(XEMU_SRC) xemu/main.c -o $@ -lm
 
 xemu-bin: build/xemu

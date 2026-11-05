@@ -45,12 +45,15 @@ static void write_reg(int idx, uint64_t val, int sz) {
   xemu.gpr[idx] = (xemu.gpr[idx] & ~m) | (val & m);
 }
 
-static uint64_t ea(const XemuInst *d) {
+uint64_t xemu_ea(const XemuInst *d) {
   if (d->rip_rel) return xemu.rip + d->len + (uint64_t)d->disp;
   uint64_t a = 0;
   if (d->has_base) a += xemu.gpr[d->base];
   if (d->has_index) a += xemu.gpr[d->index] << d->scale;
   a += (uint64_t)d->disp;
+  /* In 64-bit mode only FS and GS keep a non-zero base (TLS). */
+  if (d->seg_ovr == 5) a += xemu.fs_base;
+  else if (d->seg_ovr == 6) a += xemu.gs_base;
   return a;
 }
 
@@ -83,7 +86,7 @@ static uint64_t read_op(const XemuInst *d, int is_a, int sz) {
   int kind = is_a ? d->a_kind : d->b_kind;
   int idx = is_a ? d->a_idx : d->b_idx;
   if (kind == XK_GPR) return read_reg(idx, sz);
-  if (kind == XK_MEM) return ld(ea(d), sz);
+  if (kind == XK_MEM) return ld(xemu_ea(d), sz);
   if (kind == XK_IMM) return d->imm & mask_of(sz);
   return 0;
 }
@@ -92,7 +95,7 @@ static void write_op(const XemuInst *d, int is_a, uint64_t v, int sz) {
   int kind = is_a ? d->a_kind : d->b_kind;
   int idx = is_a ? d->a_idx : d->b_idx;
   if (kind == XK_GPR) write_reg(idx, v, sz);
-  else if (kind == XK_MEM) st(ea(d), v, sz);
+  else if (kind == XK_MEM) st(xemu_ea(d), v, sz);
 }
 
 static void add_flags(uint64_t a, uint64_t b, uint64_t res, int sz, int cin) {
@@ -273,6 +276,12 @@ int xemu_exec(const XemuInst *d) {
   int sz = d->opsz;
   uint16_t op = d->op;
   if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
+  if (op >= Ops_FNINIT && op <= Ops_FNOP) {
+    if (xemu_fpu_exec(d) != 0) return -1;
+    xemu.rip += d->len;
+    xemu_after_inst();
+    return 0;
+  }
   if ((op >= Ops_MOVD && op <= Ops_CVTTPD2DQ) ||
       (op >= Ops_PADDB && op <= Ops_MOVNTDQ)) return xemu_sse_exec(d);
   switch (op) {
@@ -372,7 +381,7 @@ int xemu_exec(const XemuInst *d) {
     case Ops_CMPXCHG8B: {
       int n = d->memsz ? d->memsz : 8;
       uint8_t buf[16];
-      if (xemu_vread(ea(d), buf, n) != 0) {
+      if (xemu_vread(xemu_ea(d), buf, n) != 0) {
         if (!xemu_fault_pending) { xemu_raise_exc(14, xemu_fault_err, xemu.rip); xemu_fault_pending = 1; }
         break;
       }
@@ -384,7 +393,7 @@ int xemu_exec(const XemuInst *d) {
         if (lo == cmp) {
           setf(F_ZF, 1);
           uint64_t nv = ((xemu.gpr[1] & 0xffffffff) << 32) | (xemu.gpr[3] & 0xffffffff);
-          xemu_vwrite(ea(d), &nv, 8);
+          xemu_vwrite(xemu_ea(d), &nv, 8);
         } else {
           setf(F_ZF, 0);
           xemu.gpr[0] = lo & 0xffffffff;
@@ -397,7 +406,7 @@ int xemu_exec(const XemuInst *d) {
           uint8_t out[16];
           for (int i = 0; i < 8; i++) out[i] = (uint8_t)(nlo >> (8 * i));
           for (int i = 0; i < 8; i++) out[8 + i] = (uint8_t)(nhi >> (8 * i));
-          xemu_vwrite(ea(d), out, 16);
+          xemu_vwrite(xemu_ea(d), out, 16);
         } else {
           setf(F_ZF, 0);
           xemu.gpr[0] = lo; xemu.gpr[2] = hi;
@@ -420,8 +429,18 @@ int xemu_exec(const XemuInst *d) {
       write_reg(d->a_idx, v, sz);
       break;
     }
+    case Ops_MOV_SEG: {
+      uint64_t *segs[6] = {&xemu.es, &xemu.cs, &xemu.ss, &xemu.ds, &xemu.fs, &xemu.gs};
+      int si = d->a_idx;
+      if (si < 0 || si > 5) break;
+      if (d->cond == 0xff) break;
+      if (si == 1) break;             /* cannot load CS from r/m */
+      uint64_t v = read_op(d, 1, 2);
+      *segs[si] = v & 0xffff;
+      break;
+    }
     case Ops_LEA:
-      write_reg(d->a_idx, ea(d), sz);
+      write_reg(d->a_idx, xemu_ea(d), sz);
       break;
     case Ops_ADD: case Ops_ADC: case Ops_SUB: case Ops_SBB: case Ops_AND:
     case Ops_OR: case Ops_XOR: case Ops_CMP: case Ops_TEST: {
@@ -672,10 +691,15 @@ int xemu_exec(const XemuInst *d) {
     case Ops_NOP: case Ops_ENDBR:
       break;
     case Ops_HLT:
-      xemu.halted = 1;
+      /* HLT parks the CPU until an interrupt arrives; it is not program
+       * exit. Tests end by storing to the halt MMIO window instead, so keep
+       * executing: with IF clear this only advances the RIP. */
+      xemu.halted_cpu = 1;
       xemu.rip += d->len;
       return 0;
     case Ops_MOV_CR: {
+      /* 0F 20: r64 <- CRn (a_idx = destination GPR, cond = 0)
+         0F 22: CRn <- r64 (a_idx = source GPR,      cond = 1) */
       int cr = (int)(d->imm & 0xff);
       int is_write = d->cond == 1;
       uint64_t v = xemu.gpr[d->a_idx];
@@ -710,7 +734,11 @@ int xemu_exec(const XemuInst *d) {
     case Ops_LGDT:
     case Ops_LIDT: {
       uint8_t b[10];
-      if (xemu_mem_read(ea(d), b, 10) != 0) return -1;
+      /* The operand is a virtual address: translate through the page tables. */
+      if (xemu_vread(xemu_ea(d), b, 10) != 0) {
+        xemu_raise_exc(14, 0, xemu.rip);
+        return 0;
+      }
       uint64_t base = 0;
       for (int i = 0; i < 8; i++) base |= (uint64_t)b[2 + i] << (8 * i);
       if (op == Ops_LGDT) {
@@ -721,6 +749,51 @@ int xemu_exec(const XemuInst *d) {
         xemu.idtr_base = base;
       }
       break;
+    }
+    case Ops_LEAVE:
+      /* RSP = RBP; pop RBP (operand-size dependent, 64-bit in long mode). */
+      xemu.gpr[4] = xemu.gpr[5];
+      xemu.gpr[5] = pop_val(sz == 2 ? 2 : 8);
+      break;
+    case Ops_ENTER: {
+      /* ENTER imm16, imm8: allocate a frame with `level` nesting. */
+      int alloc = (int)(d->imm & 0xffff);
+      int level = (int)((d->imm >> 16) & 0x1f);
+      int psz = sz == 2 ? 2 : 8;
+      push_val(xemu.gpr[5], psz);
+      uint64_t frame = xemu.gpr[4];
+      if (level > 0) {
+        uint64_t rbp = xemu.gpr[5];
+        for (int i = 1; i < level; i++) {
+          rbp -= psz;
+          uint64_t v = 0;
+          xemu_mem_read(rbp, &v, (size_t)psz);
+          push_val(v, psz);
+        }
+        push_val(frame, psz);
+      }
+      xemu.gpr[5] = frame;
+      xemu.gpr[4] -= (uint64_t)alloc;
+      break;
+    }
+    case Ops_RETF: {
+      /* Far return: pop RIP, then CS. In 64-bit mode the operand size is
+       * always 64 bits and no SS:RSP is popped. The kernel uses this to
+       * switch from the 32-bit compat segment to the 64-bit code segment. */
+      uint64_t new_rip = 0, new_cs = 0;
+      /* The stack holds virtual addresses; translate through the page tables. */
+      if (xemu_vread(xemu.gpr[4], &new_rip, 8) != 0) {
+        xemu_raise_exc(14, 0, xemu.rip); return 0;
+      }
+      xemu.gpr[4] += 8;
+      if (xemu_vread(xemu.gpr[4], &new_cs, 8) != 0) {
+        xemu_raise_exc(14, 0, xemu.rip); return 0;
+      }
+      xemu.gpr[4] += 8;
+      xemu.rip = new_rip;
+      xemu.cs = new_cs & 0xffff;
+      if (d->imm) xemu.gpr[4] += d->imm;
+      return 0;      /* do not fall through to the rip += len epilogue */
     }
     case Ops_IRET: {
       /* The RTL IRET microcode always pops the 5-slot frame. */
@@ -753,6 +826,10 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000081: xemu.star = v; break;
         case 0xc0000082: xemu.lstar = v; break;
         case 0xc0000083: xemu.sfmask = v; break;
+
+        case 0xc0000100: xemu.fs_base = v; break;
+        case 0xc0000101: xemu.gs_base = v; break;
+        case 0xc0000102: xemu.kernel_gs_base = v; break;
         default: break;
       }
       break;
