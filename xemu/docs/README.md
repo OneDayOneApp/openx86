@@ -26,6 +26,7 @@ XEMU 是自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，�
 | 系统 co-sim | 10 / 10 |
 | XEMU 专属系统测试（CPL3/timer） | 2 / 2 |
 | 独立运行器 | `make xemu-bin` → `build/xemu` |
+| Bochs 独立仲裁 | 39 / 39（`make bochs-test`） |
 
 ## 测试命令
 
@@ -37,4 +38,30 @@ make xemu-sys-test      # CPL3 / TSS / timer
 make sys-lockstep-test  # 系统逐指令锁步（RTL + XEMU）
 make sys-diff-test      # 系统结束态 co-sim
 make xemu-all-test      # 以上组合
+make bochs-build        # 构建 Bochs 2.8 黄金基准
+make bochs-test         # Bochs 独立仲裁对拍
 ```
+
+## 黄金基准
+
+三个参考模型定位互补，出现分歧时的仲裁顺序是
+**Intel SDM > Bochs > QEMU > Unicorn**：
+
+| 基准 | 覆盖 | 用途 |
+| --- | --- | --- |
+| [Unicorn](https://github.com/unicorn-engine/unicorn) | 用户态指令语义 | `make isa-diff`，14300 向量，日常/CI |
+| [Bochs](https://bochs.sourceforge.io/) | 完整系统模式 + 调试器 | 独立实现，语义仲裁；`make bochs-test` |
+| QEMU | 系统模式 / Linux 引导 | 后续 L1–L4 对照（未接入） |
+
+Bochs 与 QEMU/Unicorn（同为 TCG）不同源，是独立解释器实现，
+因此能捕捉"引擎级"偏差。它较慢（约 30 MIPS），故只做抽样仲裁，
+不进每次提交的门禁。
+
+### Bochs 接入方式
+
+`tools/bochs/boot.S` 是一段 512 字节引导桩：建好 4 级恒等页表（0–16MiB，
+外加 `0xF0000000` 映射到 scratch RAM 以承接 halt MMIO 写入）、置
+`CR4.PAE|OSFXSR|OSXMMEXCPT`、打开 `LME`+`PG`，进入 64 位长模式后停住。
+`tools/bochs/run.py` 随后用调试器 `loadmem` 装载载荷、清零寄存器、
+通过一段 24 字节 stub 设置 `RFLAGS`（Bochs 的 `set eflags` 文档存在但未实现），
+再单步执行并抓取寄存器快照。

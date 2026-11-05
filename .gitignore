@@ -10,3 +10,6 @@ project/project/
 .DS_Store
 test_run_dir/
 __pycache__/
+
+# Downloadable third-party dependencies (Bochs source)
+.deps/

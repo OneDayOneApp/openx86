@@ -1,3 +1,19 @@
+## Unreleased — Bochs 独立黄金基准
+
+### 新增
+
+- 构建 Bochs 2.8（`--enable-debugger`，x86-64，nogui）作为独立仲裁基准
+  - `make bochs-build` / `make bochs-img` / `make bochs-test`
+- `tools/bochs/boot.S`：512 字节长模式引导桩（4 级页表、PAE、OSFXSR、LME+PG）
+- `tools/bochs/run.py`：调试器驱动（loadmem + RFLAGS stub + 单步 + 状态抓取）
+- `tools/bochs/difftest.py`：XEMU vs Bochs 对拍，39/39 通过
+
+### 修复（Bochs 接入过程中发现）
+
+- 2MiB 大页物理基址必须 2MiB 对齐（`0x100000` → `0x200000`），否则触发 RSVD 位 #PF
+- 执行 SSE 前必须置位 `CR4.OSFXSR`/`OSXMMEXCPT`
+- 早期 halt 的镜像需按实际步数对齐，避免把"提前停机"误判为状态偏差
+
 ## Unreleased — 文档整理
 
 ### 变更
