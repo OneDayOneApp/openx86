@@ -11,4 +11,7 @@ void xemu_reset(void) {
   xemu.rflags = 0x202;
   xemu.cs = 0x8;
   xemu.ss = 0x10;
+  xemu_uart_reset();
+  xemu_pic_reset();
+  xemu_pit_reset();
 }

@@ -148,6 +148,10 @@ enum {
   Ops_MOVNTDQ = 147,
   Ops_LTR = 148,
   Ops_LGDT = 149,
+  Ops_IN = 150,
+  Ops_OUT = 151,
+  Ops_INS = 152,
+  Ops_OUTS = 153,
   Ops_UNDEF = 255,
 };
 

@@ -162,7 +162,8 @@ emu-fuzz: emu
 
 # ---------------------------------------------------------------- XEMU (self-written reference model)
 XEMU_SO := build/ref/libxemu.so
-XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c,$(wildcard xemu/*.c))
+XEMU_SRC := $(filter-out xemu/decode_test.c xemu/decode_field_test.c xemu/main.c,$(wildcard xemu/*.c)) \
+            $(wildcard xemu/dev/*.c)
 
 .PHONY: xemu-so
 xemu-so: $(XEMU_SO)
@@ -172,15 +173,21 @@ $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h ref/difftest_abi.h
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared \
 	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
-build/xemu: xemu/main.c xemu/decode.c xemu/exec.c xemu/mem.c xemu/sse.c xemu/state.c xemu/xemu.h
+build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h
+	@mkdir -p build
 	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra \
-	  xemu/main.c xemu/decode.c xemu/exec.c xemu/mem.c xemu/sse.c xemu/state.c -o $@ -lm
+	  $(XEMU_SRC) xemu/main.c -o $@ -lm
 
 xemu-bin: build/xemu
 
 .PHONY: isa-diff
 isa-diff: xemu-so
 	python3 tools/isa_diff.py 100 1
+
+# L0 device tests (port I/O, UART, PIC, PIT) plus the P3 system tests.
+.PHONY: xemu-dev-test
+xemu-dev-test: xemu-bin
+	python3 tools/xemu_sys.py
 
 xemu-test: emu xemu-so
 	python3 tools/difftest.py tests/emu/xemu_m0.S

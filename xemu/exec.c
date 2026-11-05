@@ -279,6 +279,48 @@ int xemu_exec(const XemuInst *d) {
     case Ops_MOVS: case Ops_STOS: case Ops_LODS: case Ops_SCAS: case Ops_CMPS:
       do_string(d);
       break;
+    case Ops_IN: {
+      uint32_t port = d->port_imm ? (uint32_t)(d->imm & 0xffff)
+                                  : (uint32_t)(xemu.gpr[2] & 0xffff);
+      uint64_t v = 0;
+      xemu_port_in(port, d->io_sz, &v);
+      write_reg(0, v, d->io_sz);
+      break;
+    }
+    case Ops_OUT: {
+      uint32_t port = d->port_imm ? (uint32_t)(d->imm & 0xffff)
+                                  : (uint32_t)(xemu.gpr[2] & 0xffff);
+      xemu_port_out(port, d->io_sz, read_reg(0, d->io_sz));
+      break;
+    }
+    case Ops_INS: case Ops_OUTS: {
+      int dir = str_dir();
+      uint32_t port = (uint32_t)(xemu.gpr[2] & 0xffff);
+      uint64_t count = d->rep ? xemu.gpr[1] : 1;
+      int sz = d->io_sz ? d->io_sz : 1;
+      while (count--) {
+        if (op == Ops_INS) {
+          uint64_t v = 0;
+          xemu_port_in(port, sz, &v);
+          if (xemu_vwrite(xemu.gpr[7], &v, sz) != 0) {
+            xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+            return 0;
+          }
+          xemu.gpr[7] += dir * sz;
+        } else {
+          uint64_t v = 0;
+          if (xemu_vread(xemu.gpr[6], &v, sz) != 0) {
+            xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+            return 0;
+          }
+          xemu_port_out(port, sz, v);
+          xemu.gpr[6] += dir * sz;
+        }
+        if (!d->rep) break;
+        xemu.gpr[1]--;
+      }
+      break;
+    }
     case Ops_BSF: case Ops_BSR: {
       uint64_t v = read_op(d, 0, sz) & mask_of(sz);
       if (v == 0) {
@@ -768,9 +810,9 @@ int xemu_exec(const XemuInst *d) {
               (unsigned long long)xemu.rip);
       return -1;
   }
-  if (xemu_fault_pending) { xemu_fault_pending = 0; xemu_timer_tick(); return 0; }
+  if (xemu_fault_pending) { xemu_fault_pending = 0; xemu_after_inst(); return 0; }
   xemu.rip += d->len;
-  xemu_timer_tick();
+  xemu_after_inst();
   if (xemu.irq_pending) {
     int vec = xemu.irq_pending;
     if (xemu.rflags & (1ull << 9)) {
@@ -801,5 +843,16 @@ void xemu_do_sysret(void) {
     xemu.cs = cs;
     xemu.ss = (cs + 8) | 3;
     xemu.cpl = 3;
+  }
+}
+
+/* Per-instruction device tick: UART input polling, PIT, and PIC delivery. */
+void xemu_after_inst(void) {
+  xemu_timer_tick();
+  xemu_pit_tick();
+  xemu_uart_poll();
+  if (xemu.rflags & (1ull << 9)) {
+    int vec = xemu_pic_ack();
+    if (vec >= 0) xemu_raise_exc((uint64_t)vec, 0, xemu.rip);
   }
 }

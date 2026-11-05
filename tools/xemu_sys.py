@@ -15,8 +15,13 @@ BUILD = os.path.join(ROOT, "build", "sys")
 
 # test -> expected halt exit code
 CASES = [
+    # P3: system mode
     ("t40_cpl3", 0x7a),
     ("t41_timer", 0x07),
+    # L0: port I/O + devices
+    ("t50_uart", 0x50),
+    ("t51_pit", 0x60),
+    ("t52_portio", 0x70),
 ]
 
 
