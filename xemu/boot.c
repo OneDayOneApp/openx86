@@ -52,6 +52,8 @@ static void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v
  * header (may be NULL for a pre-decompressed vmlinux) and `load_addr` the
  * address the kernel image was placed at.
  */
+static uint64_t initrd_addr, initrd_size;
+
 static void write_boot_params(const uint8_t *src, uint64_t load_addr,
                               const char *cmdline) {
   uint8_t zp[4096];
@@ -78,6 +80,10 @@ static void write_boot_params(const uint8_t *src, uint64_t load_addr,
   wr32(zp + O_CMDLINE_PTR, (uint32_t)CMDLINE_ADDR);
   wr32(zp + O_CMDLINE_SIZE, 2048);
   wr32(zp + O_INITRD_MAX, 0x37FFFFFF);
+  if (initrd_size) {
+    wr32(zp + O_RAMDISK_IMG, (uint32_t)initrd_addr);
+    wr32(zp + O_RAMDISK_SIZE, (uint32_t)initrd_size);
+  }
 
   struct { uint64_t addr, size; uint32_t type; } map[] = {
     {0x0, 0x9FC00, 1},
@@ -159,7 +165,38 @@ static int load_elf(const uint8_t *img, long n, uint64_t *entry) {
   return 0;
 }
 
+/* Place an initramfs image high in RAM, below the 4 GiB line the boot
+ * protocol uses for 32-bit pointers. */
+static int load_initrd(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) { fprintf(stderr, "xemu: cannot open initrd %s\n", path); return -1; }
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n <= 0) { fclose(f); return -1; }
+  uint64_t addr = (XEMU_MEM_SIZE - (uint64_t)n - 0x100000ull) & ~0xfffull;
+  uint8_t *buf = malloc((size_t)n);
+  if (!buf) { fclose(f); return -1; }
+  if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return -1; }
+  fclose(f);
+  if (xemu_mem_write(addr, buf, (uint64_t)n) != 0) { free(buf); return -1; }
+  free(buf);
+  initrd_addr = addr;
+  initrd_size = (uint64_t)n;
+  printf("xemu: initrd %ld bytes -> 0x%llx\n", n, (unsigned long long)addr);
+  return 0;
+}
+
+int xemu_boot_kernel_initrd(const char *path, const char *cmdline,
+                            const char *initrd);
+
 int xemu_boot_kernel(const char *path, const char *cmdline) {
+  return xemu_boot_kernel_initrd(path, cmdline, NULL);
+}
+
+int xemu_boot_kernel_initrd(const char *path, const char *cmdline,
+                            const char *initrd) {
+  if (initrd && load_initrd(initrd) != 0) return -1;
   FILE *f = fopen(path, "rb");
   if (!f) { perror(path); return -1; }
   fseek(f, 0, SEEK_END);

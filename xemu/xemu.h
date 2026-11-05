@@ -97,6 +97,8 @@ int xemu_vwrite(uint64_t va, const void *buf, size_t n);
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
 extern uint64_t xemu_exc_count[32];
+extern uint64_t xemu_exc_pc[32];
+extern uint64_t xemu_exc_err[32];
 /* Deliver an external interrupt (vector >= 32) if IF=1 and nothing is pending. */
 int xemu_request_irq(uint64_t vec);
 /* Advance the PIT-like timer; may set irq_pending. Called once per instruction. */
@@ -150,5 +152,6 @@ int xemu_decode(uint64_t rip, XemuInst *out);
 int xemu_exec(const XemuInst *inst);
 /* Load a Linux bzImage and set up the entry state (see boot.c). */
 int xemu_boot_kernel(const char *path, const char *cmdline);
+int xemu_boot_kernel_initrd(const char *path, const char *cmdline, const char *initrd);
 
 #endif

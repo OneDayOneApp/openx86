@@ -12,6 +12,7 @@
 static long long max_steps = 100000000;
 static const char *kernel_path = NULL;
 static const char *cmdline = "console=ttyS0 earlyprintk=serial";
+static const char *initrd_path = NULL;
 static unsigned mem_mb = 0;
 static int batch = 0;
 static int trace = 0;
@@ -105,11 +106,11 @@ static int step_once(void) {
     unsigned long long addr = 0;
     if (sscanf(stop_at, "%llx", &addr) == 1 && xemu.rip == addr) {
       fprintf(stderr, "stop-at: reached 0x%llx after %lu instructions\n"
-              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx\n",
+              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx rbx=0x%llx\n",
               (unsigned long long)addr, steps,
               (unsigned long long)xemu.gpr[0], (unsigned long long)xemu.gpr[1],
               (unsigned long long)xemu.gpr[2], (unsigned long long)xemu.gpr[6],
-              (unsigned long long)xemu.gpr[7]);
+              (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3]);
       return 1;
     }
   }
@@ -228,6 +229,7 @@ static void usage(const char *prog) {
   fprintf(stderr, "  --dump-mem=ADDR:LEN  hex-dump guest memory and exit\n");
   fprintf(stderr, "  --kernel FILE  boot a Linux bzImage via the 64-bit boot protocol\n");
   fprintf(stderr, "  --cmdline=STR  kernel command line (default: console=ttyS0)\n");
+  fprintf(stderr, "  --initrd FILE  initramfs image to hand to the kernel\n");
   fprintf(stderr, "  --mem=N        informational (memory size is build-time)\n");
 }
 
@@ -249,13 +251,14 @@ int main(int argc, char **argv) {
     else if (!strncmp(argv[i], "--dump-mem=", 11)) dump_mem = argv[i] + 11;
     else if (!strcmp(argv[i], "--kernel") && i + 1 < argc) kernel_path = argv[++i];
     else if (!strncmp(argv[i], "--cmdline=", 10)) cmdline = argv[i] + 10;
+    else if (!strcmp(argv[i], "--initrd") && i + 1 < argc) initrd_path = argv[++i];
     else if (!strncmp(argv[i], "--mem=", 6)) mem_mb = (unsigned)atoi(argv[i] + 6);
     else { usage(argv[0]); return 2; }
   }
   if (!image && !kernel_path) { usage(argv[0]); return 2; }
   xemu_reset();
   if (kernel_path) {
-    if (xemu_boot_kernel(kernel_path, cmdline) != 0) return 2;
+    if (xemu_boot_kernel_initrd(kernel_path, cmdline, initrd_path) != 0) return 2;
     xemu.rflags = 0x202;
     xemu.cs = 0x8;
     xemu.ss = 0x10;
@@ -290,8 +293,10 @@ int main(int argc, char **argv) {
   }
   for (int i = 0; i < 32; i++)
     if (xemu_exc_count[i])
-      fprintf(stderr, "xemu: exception %d raised %llu times\n", i,
-              (unsigned long long)xemu_exc_count[i]);
+      fprintf(stderr, "xemu: exception %d raised %llu times (pc=0x%llx err=0x%llx)\n", i,
+              (unsigned long long)xemu_exc_count[i],
+              (unsigned long long)xemu_exc_pc[i],
+              (unsigned long long)xemu_exc_err[i]);
   if (xemu_port_out_count || xemu_port_in_count)
     fprintf(stderr, "xemu: %llu port writes, %llu port reads\n",
             (unsigned long long)xemu_port_out_count,

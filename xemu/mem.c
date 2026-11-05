@@ -158,9 +158,11 @@ int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *acces
 }
 
 uint64_t xemu_exc_count[32];
+uint64_t xemu_exc_pc[32];
+uint64_t xemu_exc_err[32];
 
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
-  if (vec < 32) xemu_exc_count[vec]++;
+  if (vec < 32) { xemu_exc_count[vec]++; xemu_exc_pc[vec] = pc; xemu_exc_err[vec] = err; }
   uint8_t gate[16];
   uint64_t base = xemu.idtr_base + vec * 16;
   /* The IDT is addressed virtually when paging is on. Fall back to a physical
