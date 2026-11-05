@@ -152,6 +152,19 @@ enum {
   Ops_OUT = 151,
   Ops_INS = 152,
   Ops_OUTS = 153,
+  Ops_MOV_SEG = 154,
+  Ops_RETF = 155,
+  Ops_LEAVE = 156,
+  Ops_ENTER = 157,
+  /* x87 */
+  Ops_FNINIT = 160, Ops_FNCLEX, Ops_FNSTCW, Ops_FNSTSW, Ops_FLDCW,
+  Ops_FNSTENV, Ops_FNSAVE, Ops_FLD, Ops_FST, Ops_FSTP, Ops_FILD, Ops_FIST,
+  Ops_FISTP, Ops_FADD, Ops_FSUB, Ops_FSUBR, Ops_FMUL, Ops_FDIV, Ops_FDIVR,
+  Ops_FADDP, Ops_FSUBP, Ops_FSUBRP, Ops_FMULP, Ops_FDIVP, Ops_FDIVRP,
+  Ops_FCOM, Ops_FCOMP, Ops_FCOMPP, Ops_FUCOM, Ops_FUCOMP,
+  Ops_FTST, Ops_FXAM, Ops_FCHS, Ops_FABS, Ops_FSQRT, Ops_FXCH, Ops_FFREE,
+  Ops_FLD1, Ops_FLDZ, Ops_FLDPI, Ops_FLDL2E, Ops_FLDL2T, Ops_FLDLG2,
+  Ops_FLDLN2, Ops_FNOP,
   Ops_UNDEF = 255,
 };
 

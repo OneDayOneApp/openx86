@@ -8,7 +8,8 @@ enum { IMM_NONE = 0, IMM_8 = 1, IMM_Z = 2, IMM_32 = 3, IMM_64 = 4, IMM_16 = 5 };
 enum { FORM_NORMAL = 0, FORM_MOVZX8 = 1, FORM_MOVZX16 = 2, FORM_MOVSX8 = 3,
        FORM_MOVSX16 = 4, FORM_MOVSXD = 5, FORM_ACC = 6, FORM_SPECIAL = 7 };
 /* Opcode groups (mirror OpcodeGroup). */
-enum { G_NONE = 0, G_1 = 1, G_2 = 2, G_3 = 3, G_4 = 4, G_5 = 5, G_11 = 6, G_1A = 7 };
+enum { G_NONE = 0, G_1 = 1, G_2 = 2, G_3 = 3, G_4 = 4, G_5 = 5, G_11 = 6, G_1A = 7,
+       G_X87 = 8 };   /* G_X87 + n for opcodes D8+n */
 /* SIMD kinds (mirror SimdKind). */
 enum { SIMD_NONE = 0, SIMD_SS = 1, SIMD_SD = 2, SIMD_PS = 3, SIMD_PD = 4, SIMD_DQ = 5 };
 
@@ -52,6 +53,17 @@ static void init_tables(void) {
   primary[0x6a] = DI(Ops_PUSH, .modrm = 0, .imm = IMM_8, .dir = 1, .form = FORM_SPECIAL);
   primary[0x6b] = DI(Ops_IMUL, .modrm = 1, .imm = IMM_8, .dir = 1);
   for (int r = 0; r < 16; r++) primary[0x70 + r] = DI(Ops_JCC, .modrm = 0, .imm = IMM_8);
+  /* AL/eAX, imm8/imm(Z) immediate forms: 0x04/0x05 ADD, 0x0C/0x0D OR,
+     0x14/0x15 ADC, 0x1C/0x1D SBB, 0x24/0x25 AND, 0x2C/0x2D SUB,
+     0x34/0x35 XOR, 0x3C/0x3D CMP. The accumulator is always operand A. */
+  {
+    static const uint8_t alu[8] = {Ops_ADD, Ops_OR, Ops_ADC, Ops_SBB,
+                                   Ops_AND, Ops_SUB, Ops_XOR, Ops_CMP};
+    for (int i = 0; i < 8; i++) {
+      primary[0x04 + i * 8] = DI(alu[i], .modrm = 0, .imm = IMM_8, .force8 = 1);
+      primary[0x05 + i * 8] = DI(alu[i], .modrm = 0, .imm = IMM_Z);
+    }
+  }
   primary[0x80] = DI(Ops_UNDEF, .modrm = 1, .group = G_1, .force8 = 1, .imm = IMM_8);
   primary[0x81] = DI(Ops_UNDEF, .modrm = 1, .group = G_1, .imm = IMM_Z);
   primary[0x83] = DI(Ops_UNDEF, .modrm = 1, .group = G_1, .imm = IMM_8);
@@ -63,7 +75,9 @@ static void init_tables(void) {
   primary[0x89] = DI(Ops_MOV, .modrm = 1, .dir = 0);
   primary[0x8a] = DI(Ops_MOV, .modrm = 1, .dir = 1, .force8 = 1);
   primary[0x8b] = DI(Ops_MOV, .modrm = 1, .dir = 1);
+  primary[0x8c] = DI(Ops_MOV_SEG, .modrm = 1, .dir = 0);
   primary[0x8d] = DI(Ops_LEA, .modrm = 1, .dir = 1);
+  primary[0x8e] = DI(Ops_MOV_SEG, .modrm = 1, .dir = 1);
   primary[0x8f] = DI(Ops_UNDEF, .modrm = 1, .group = G_1A);
   primary[0x90] = DI(Ops_NOP, .modrm = 0);
   for (int r = 1; r < 8; r++) primary[0x90 + r] = DI(Ops_XCHG, .modrm = 0, .dir = 1, .form = FORM_SPECIAL);
@@ -92,11 +106,14 @@ static void init_tables(void) {
   primary[0xc0] = DI(Ops_UNDEF, .modrm = 1, .group = G_2, .imm = IMM_8, .force8 = 1);
   primary[0xc1] = DI(Ops_UNDEF, .modrm = 1, .group = G_2, .imm = IMM_8);
   primary[0xc2] = DI(Ops_RET, .modrm = 0, .imm = IMM_16);
+  primary[0xca] = DI(Ops_RETF, .modrm = 0, .imm = IMM_16);
+  primary[0xcb] = DI(Ops_RETF, .modrm = 0);
   primary[0xc3] = DI(Ops_RET, .modrm = 0);
   primary[0xc6] = DI(Ops_UNDEF, .modrm = 1, .group = G_11, .imm = IMM_8, .force8 = 1);
   primary[0xc7] = DI(Ops_UNDEF, .modrm = 1, .group = G_11, .imm = IMM_Z);
   primary[0xc8] = DI(Ops_UNDEF, .modrm = 0, .imm = IMM_16);
-  primary[0xc9] = DI(Ops_UNDEF, .modrm = 0);
+  primary[0xc9] = DI(Ops_LEAVE, .modrm = 0);
+  primary[0xc8] = DI(Ops_ENTER, .modrm = 0, .imm = IMM_16);
   primary[0xcc] = DI(Ops_INT3, .modrm = 0);
   primary[0xcd] = DI(Ops_INT, .modrm = 0, .imm = IMM_8);
   primary[0xcf] = DI(Ops_IRET, .modrm = 0);
@@ -117,6 +134,12 @@ static void init_tables(void) {
   primary[0x6d] = DI(Ops_INS, .modrm = 0);
   primary[0x6e] = DI(Ops_OUTS, .modrm = 0);
   primary[0x6f] = DI(Ops_OUTS, .modrm = 0);
+  /* x87 escaped opcodes D8..DF. The ModRM byte selects the operation; the
+     reg field picks the variant, and the r/m field either names ST(i) or a
+     memory operand. */
+  for (int i = 0; i < 8; i++) {
+    primary[0xd8 + i] = DI(Ops_UNDEF, .modrm = 1, .group = (uint8_t)(G_X87 + i));
+  }
   primary[0xe0] = DI(Ops_LOOPNE, .modrm = 0, .imm = IMM_8);
   primary[0xe1] = DI(Ops_LOOPE, .modrm = 0, .imm = IMM_8);
   primary[0xe2] = DI(Ops_LOOP, .modrm = 0, .imm = IMM_8);
@@ -267,6 +290,231 @@ static int64_t sext(uint64_t v, int bits) {
   return (int64_t)v;
 }
 
+/* x87 opcode groups D8..DF.
+ *
+ * `esc` is 0..7 for D8..DF, `reg` the ModRM reg field, `mod`/`rm` the operand.
+ * When mod != 3 the operand is memory and its width depends on the escape;
+ * when mod == 3 the r/m field selects ST(i). */
+static DInfo x87m(uint8_t op, uint8_t memsz) {
+  DInfo d = {0};
+  d.op = op;
+  d.modrm = 1;
+  d.form = memsz;               /* memory operand width */
+  return d;
+}
+
+static DInfo x87r(uint8_t op, int idx) {
+  DInfo d = {0};
+  d.op = op;
+  d.modrm = 1;
+  d.form = 0;                   /* register form */
+  d.imm = (uint8_t)idx;         /* b_idx is filled from rm later */
+  return d;
+}
+
+static DInfo x87_group(int esc, int reg, int mod, int rm) {
+  int is_reg = (mod == 3);
+  switch (esc) {
+    case 0:  /* D8: m32real arithmetic / ST(i) forms */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FADD, 4);
+          case 1: return x87m(Ops_FMUL, 4);
+          case 2: return x87m(Ops_FCOM, 4);
+          case 3: return x87m(Ops_FCOMP, 4);
+          case 4: return x87m(Ops_FSUB, 4);
+          case 5: return x87m(Ops_FSUBR, 4);
+          case 6: return x87m(Ops_FDIV, 4);
+          case 7: return x87m(Ops_FDIVR, 4);
+        }
+      }
+      switch (reg) {
+        case 0: return x87r(Ops_FADD, rm);
+        case 1: return x87r(Ops_FMUL, rm);
+        case 2: return x87r(Ops_FCOM, rm);
+        case 3: return x87r(Ops_FCOMP, rm);
+        case 4: return x87r(Ops_FSUB, rm);
+        case 5: return x87r(Ops_FSUBR, rm);
+        case 6: return x87r(Ops_FDIV, rm);
+        case 7: return x87r(Ops_FDIVR, rm);
+      }
+      break;
+    case 1:  /* D9 */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FLD, 4);
+          case 2: return x87m(Ops_FST, 4);
+          case 3: return x87m(Ops_FSTP, 4);
+          case 4: return x87m(Ops_FNSTENV, 4);
+          case 5: return x87m(Ops_FLDCW, 4);
+          case 6: return x87m(Ops_FNSTCW, 4);
+          case 7: return x87m(Ops_FNSTSW, 4);
+        }
+      } else {
+        switch (rm) {
+          case 0: return x87r(Ops_FLD, reg);
+          case 1: return x87r(Ops_FXCH, reg);
+          case 2: return x87m(Ops_FNOP, 0);
+          case 3: return x87m(Ops_FNOP, 0);   /* FSTP ST(i): treat as nop */
+          default: break;
+        }
+        switch (reg) {
+          case 4: return x87m(Ops_FCHS, 0);
+          case 5: return x87m(Ops_FABS, 0);
+          case 6: return x87m(Ops_FSQRT, 0);
+          default: break;
+        }
+        if (reg == 7 && rm == 4) return x87m(Ops_FTST, 0);
+        if (reg == 7 && rm == 5) return x87m(Ops_FXAM, 0);
+        if (reg == 7 && rm >= 0 && rm <= 3) {
+          static const uint8_t c[] = {Ops_FLD1, Ops_FLDL2T, Ops_FLDL2E, Ops_FLDPI};
+          return x87m(c[rm], 0);
+        }
+        if (reg == 7 && rm == 6) return x87m(Ops_FLDLG2, 0);
+        if (reg == 7 && rm == 7) return x87m(Ops_FLDLN2, 0);
+      }
+      break;
+    case 2:  /* DA */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 4);
+          case 2: return x87m(Ops_FIST, 4);
+          case 3: return x87m(Ops_FISTP, 4);
+          default: break;
+        }
+      } else {
+        switch (reg) {
+          case 0: return x87r(Ops_FADD, rm);
+          case 1: return x87r(Ops_FMUL, rm);
+          case 2: return x87r(Ops_FCOM, rm);
+          case 3: return x87r(Ops_FCOMP, rm);
+          case 5: return x87r(Ops_FSUBR, rm);
+          case 7: return x87r(Ops_FDIVR, rm);
+          default: break;
+        }
+      }
+      break;
+    case 3:  /* DB */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 4);
+          case 2: return x87m(Ops_FIST, 4);
+          case 3: return x87m(Ops_FISTP, 4);
+          case 5: return x87m(Ops_FLD, 10);
+          case 7: return x87m(Ops_FSTP, 10);
+          default: break;
+        }
+      } else {
+        if (reg == 4) return x87m(Ops_FNOP, 0);      /* FLDCW/FNSTENV alias */
+        if (reg == 6) return x87m(Ops_FNOP, 0);      /* FNSAVE/FNSTSW alias */
+        switch (rm) {
+          case 0: return x87m(Ops_FNOP, 0);          /* FCMOVB */
+          case 5: return x87m(Ops_FNOP, 0);          /* FUCOMI */
+          case 6: return x87m(Ops_FNOP, 0);
+          default: break;
+        }
+        switch (reg) {
+          case 0: return x87r(Ops_FADD, rm);
+          case 1: return x87r(Ops_FMUL, rm);
+          case 2: return x87r(Ops_FCOM, rm);
+          case 3: return x87r(Ops_FCOMP, rm);
+          case 5: return x87r(Ops_FSUBR, rm);
+          case 7: return x87r(Ops_FDIVR, rm);
+          default: break;
+        }
+      }
+      break;
+    case 4:  /* DC: m64real */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FADD, 8);
+          case 1: return x87m(Ops_FMUL, 8);
+          case 2: return x87m(Ops_FCOM, 8);
+          case 3: return x87m(Ops_FCOMP, 8);
+          case 4: return x87m(Ops_FSUB, 8);
+          case 5: return x87m(Ops_FSUBR, 8);
+          case 6: return x87m(Ops_FDIV, 8);
+          case 7: return x87m(Ops_FDIVR, 8);
+        }
+      }
+      switch (reg) {
+        case 0: return x87r(Ops_FADD, rm);
+        case 1: return x87r(Ops_FMUL, rm);
+        case 2: return x87r(Ops_FCOM, rm);
+        case 3: return x87r(Ops_FCOMP, rm);
+        case 4: return x87r(Ops_FSUBR, rm);
+        case 5: return x87r(Ops_FSUBR, rm);
+        case 6: return x87r(Ops_FDIVR, rm);
+        case 7: return x87r(Ops_FDIVR, rm);
+      }
+      break;
+    case 5:  /* DD */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FLD, 8);
+          case 2: return x87m(Ops_FST, 8);
+          case 3: return x87m(Ops_FSTP, 8);
+          case 4: return x87m(Ops_FNSAVE, 8);
+          case 6: return x87m(Ops_FNSTSW, 8);
+          case 7: return x87m(Ops_FNSTSW, 8);
+          default: break;
+        }
+      } else {
+        if (reg == 0) return x87m(Ops_FFREE, 0);
+        if (reg == 1) return x87m(Ops_FXCH, 0);
+        if (reg == 2) return x87m(Ops_FST, 0);
+        if (reg == 3) return x87m(Ops_FSTP, 0);
+        if (reg == 4) return x87m(Ops_FNOP, 0);   /* FUCOM */
+        if (reg == 5) return x87m(Ops_FNOP, 0);   /* FUCOMP */
+      }
+      break;
+    case 6:  /* DE: m16int */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FADD, 2);
+          case 1: return x87m(Ops_FMUL, 2);
+          case 2: return x87m(Ops_FCOM, 2);
+          case 3: return x87m(Ops_FCOMP, 2);
+          case 4: return x87m(Ops_FSUB, 2);
+          case 5: return x87m(Ops_FSUBR, 2);
+          case 6: return x87m(Ops_FDIV, 2);
+          case 7: return x87m(Ops_FDIVR, 2);
+        }
+      }
+      switch (reg) {
+        case 0: return x87r(Ops_FADDP, rm);
+        case 1: return x87r(Ops_FMULP, rm);
+        case 3: return x87m(Ops_FCOMPP, 0);
+        case 4: return x87r(Ops_FSUBRP, rm);
+        case 5: return x87r(Ops_FSUBP, rm);
+        case 6: return x87r(Ops_FDIVRP, rm);
+        case 7: return x87r(Ops_FDIVP, rm);
+        default: break;
+      }
+      break;
+    case 7:  /* DF: m16int / m64int */
+      if (!is_reg) {
+        switch (reg) {
+          case 0: return x87m(Ops_FILD, 2);
+          case 2: return x87m(Ops_FIST, 2);
+          case 3: return x87m(Ops_FISTP, 2);
+          case 5: return x87m(Ops_FILD, 8);
+          case 7: return x87m(Ops_FISTP, 8);
+          default: break;
+        }
+      } else {
+        if (reg == 4) return x87m(Ops_FNSTSW, 0);   /* FNSTSW AX */
+        if (reg == 5) return x87m(Ops_FNOP, 0);     /* FUCOMIP */
+        if (reg == 6) return x87m(Ops_FNOP, 0);     /* FCOMIP */
+        if (reg == 0) return x87m(Ops_FFREE, 0);
+      }
+      break;
+    default: break;
+  }
+  return x87m(Ops_UNDEF, 0);
+}
+
+
 int xemu_decode(uint64_t rip, XemuInst *out) {
   init_tables();
   uint8_t buf[16];
@@ -279,6 +527,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   memset(out, 0, sizeof(*out));
 
   int off = 0, p66 = 0, p67 = 0, rep = 0, lock = 0, rex = 0, rex_valid = 0;
+  int seg_ovr = 0;          /* 0 none, 1 ES, 2 CS, 3 SS, 4 DS, 5 FS, 6 GS */
   int overflow = 0;
   /* Up to five prefix slots, mirroring the RTL prefix scanner. */
   for (int n = 0; n < 5; n++) {
@@ -294,6 +543,12 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     else if (b == 0xf3) rep = 1;
     else if (b == 0xf2) rep = 2;
     else if (b == 0xf0) lock = 1;
+    else if (b == 0x26) seg_ovr = 1;
+    else if (b == 0x2e) seg_ovr = 2;
+    else if (b == 0x36) seg_ovr = 3;
+    else if (b == 0x3e) seg_ovr = 4;
+    else if (b == 0x64) seg_ovr = 5;
+    else if (b == 0x65) seg_ovr = 6;
     if (is_rex) { rex = b; rex_valid = 1; }
     else if (is_legacy) { rex = 0; rex_valid = 0; }
   }
@@ -316,12 +571,16 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
 
   DInfo gi = {0};
   int g_active = has_modrm && base.group != 0;
-  if (g_active) gi = groups[base.group - 1][reg];
+  if (g_active) {
+    if (base.group >= G_X87) gi = x87_group(base.group - G_X87, reg, mod, rm);
+    else gi = groups[base.group - 1][reg];
+  }
 
   int imm_kind = (g_active && gi.imm != 0) ? gi.imm : base.imm;
   int dir = g_active ? gi.dir : base.dir;
   int form = g_active ? gi.form : base.form;
   int op = is3 ? Ops_UNDEF : (g_active ? gi.op : base.op);
+  int is_x87 = (base.group >= G_X87);
   int force8 = base.force8;
   int sse_sel = base.sse_sel && !g_active;
 
@@ -608,7 +867,41 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     }
     out->opsz = out->io_sz;
   }
+  if (op >= Ops_ADD && op <= Ops_CMP && !base.modrm && base.imm != 0) {
+    /* Accumulator-immediate forms: A = AL/AX/EAX/RAX, B = immediate. */
+    out->a_kind = XK_GPR; out->a_idx = 0;
+    out->b_kind = XK_IMM; out->b_idx = 0;
+  }
+  if (op == Ops_MOV_SEG) {
+    /* 8C: r/m16 <- sreg (2-bit selector in the ModRM reg field).
+       8E: sreg <- r/m16. The segment index (0..5) lives in `cond`. */
+    static const int segmap[8] = {0, 1, 2, 3, 4, 5, -1, -1};
+    int sreg = segmap[reg];
+    out->cond = (uint8_t)(sreg < 0 ? 0xff : sreg);
+    out->opsz = 2;
+    if (dir == 0) {                   /* 8C: store sreg into r/m */
+      out->a_kind = XK_SEG; out->a_idx = (uint8_t)(sreg < 0 ? 0 : sreg);
+      out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
+      out->b_idx = rm | (rexB << 3);
+      out->memsz = 2;
+    } else {                          /* 8E: load sreg from r/m */
+      out->a_kind = XK_SEG; out->a_idx = (uint8_t)(sreg < 0 ? 0 : sreg);
+      out->b_kind = rm_is_reg ? XK_GPR : XK_MEM;
+      out->b_idx = rm | (rexB << 3);
+      out->memsz = 2;
+    }
+    out->illegal = (sreg < 0);
+  }
+  if (is_x87) {
+    /* `simd` carries the memory operand width (0 = register form); for the
+       register form `imm` holds the ST(i) index. */
+    out->simd = gi.form;
+    if (gi.form == 0) { out->b_kind = XK_X87; out->b_idx = (uint8_t)gi.imm; }
+    else { out->b_kind = XK_MEM; out->b_idx = 0; out->memsz = gi.form; }
+    if (op == Ops_FNSTSW && reg == 7 && rm == 4) out->a_kind = XK_GPR;
+  }
   if (op == Ops_LTR) {
+
     out->a_kind = XK_GPR; out->a_idx = rm | (rexB << 3);
     out->b_kind = XK_NONE;
     out->opsz = 2;
@@ -654,6 +947,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_WRMSR) { out->a_kind = XK_GPR; out->a_idx = 1; out->b_kind = XK_GPR; out->b_idx = 0; }
   if (op == Ops_SYSRET) { out->a_kind = XK_GPR; out->a_idx = 1; out->b_kind = XK_GPR; out->b_idx = 11; }
   if (op == Ops_SYSCALL || op == Ops_IRET) { out->a_kind = XK_NONE; out->b_kind = XK_NONE; }
+  out->seg_ovr = (uint8_t)seg_ovr;
   (void)lock; (void)sse_sel; (void)p67; (void)b_idx;
 
   int bad_sse = is_xmm && (op == Ops_SIMD_PAND || op == Ops_SIMD_POR || op == Ops_SIMD_PXOR ||

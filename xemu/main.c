@@ -10,8 +10,13 @@
 #define ENTRY 0x400000ull
 
 static long long max_steps = 100000000;
+static const char *kernel_path = NULL;
+static const char *cmdline = "console=ttyS0 earlyprintk=serial";
+static unsigned mem_mb = 0;
 static int batch = 0;
 static int trace = 0;
+static int trace_cr = 0;
+static const char *dump_mem = NULL;
 static unsigned long steps;
 
 /* NEMU-style instruction ring buffer, dumped on a fatal error. */
@@ -61,6 +66,11 @@ static int step_once(void) {
   if (trace)
     fprintf(stderr, "0x%llx: op=%u len=%u\n",
             (unsigned long long)xemu.rip, (unsigned)inst.op, (unsigned)inst.len);
+  if (trace_cr && (inst.op == Ops_MOV_CR || inst.op == Ops_SYSCALL))
+    fprintf(stderr, "cr@0x%llx op=%u cr0=0x%llx cr3=0x%llx cr4=0x%llx rax=0x%llx\n",
+            (unsigned long long)xemu.rip, inst.op,
+            (unsigned long long)xemu.cr0, (unsigned long long)xemu.cr3,
+            (unsigned long long)xemu.cr4, (unsigned long long)xemu.gpr[0]);
   ring_add(xemu.rip, inst.op, inst.len);
   rc = xemu_exec(&inst);
   if (rc != 0) {
@@ -120,13 +130,30 @@ static void monitor(void) {
   }
 }
 
+static void dump_mem_and_exit(void) {
+  if (!dump_mem) return;
+  unsigned long long addr = 0, len = 0;
+  if (sscanf(dump_mem, "%llx:%llx", &addr, &len) != 2) return;
+  for (unsigned long long off = 0; off < len; off += 16) {
+    printf("%016llx ", addr + off);
+    for (unsigned long long k = 0; k < 16 && off + k < len; k++) {
+      uint8_t b = (addr + off + k < XEMU_MEM_SIZE) ? xemu_mem[addr + off + k] : 0;
+      printf("%02x ", b);
+    }
+    printf("\n");
+  }
+}
+
 static void usage(const char *prog) {
   fprintf(stderr, "usage: %s -i IMAGE [-b] [--max-steps=N]\n", prog);
   fprintf(stderr, "  -i IMAGE       raw binary loaded at 0x400000\n");
   fprintf(stderr, "  -b             batch mode (run until halt)\n");
   fprintf(stderr, "  --max-steps=N  instruction limit (default 100000000)\n");
   fprintf(stderr, "  --trace        print an instruction trace (NEMU itrace style)\n");
-  fprintf(stderr, "  (memory size is fixed at build time: -DXEMU_MEM_SIZE_MB=N)\n");
+  fprintf(stderr, "  --dump-mem=ADDR:LEN  hex-dump guest memory and exit\n");
+  fprintf(stderr, "  --kernel FILE  boot a Linux bzImage via the 64-bit boot protocol\n");
+  fprintf(stderr, "  --cmdline=STR  kernel command line (default: console=ttyS0)\n");
+  fprintf(stderr, "  --mem=N        informational (memory size is build-time)\n");
 }
 
 int main(int argc, char **argv) {
@@ -136,29 +163,41 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-i") && i + 1 < argc) image = argv[++i];
     else if (!strncmp(argv[i], "--image=", 8)) image = argv[i] + 8;
     else if (!strncmp(argv[i], "--max-steps=", 12)) max_steps = atoll(argv[i] + 12);
-  else if (!strncmp(argv[i], "-m", 2) && i + 1 < argc) i++;   /* memory size is build-time */
-  else if (!strncmp(argv[i], "--mem=", 6)) i = i;             /* accepted, build-time */
     else if (!strcmp(argv[i], "--trace")) trace = 1;
+    else if (!strcmp(argv[i], "--trace-cr")) trace_cr = 1;
+    else if (!strncmp(argv[i], "--dump-mem=", 11)) dump_mem = argv[i] + 11;
+    else if (!strcmp(argv[i], "--kernel") && i + 1 < argc) kernel_path = argv[++i];
+    else if (!strncmp(argv[i], "--cmdline=", 10)) cmdline = argv[i] + 10;
+    else if (!strncmp(argv[i], "--mem=", 6)) mem_mb = (unsigned)atoi(argv[i] + 6);
     else { usage(argv[0]); return 2; }
   }
-  if (!image) { usage(argv[0]); return 2; }
+  if (!image && !kernel_path) { usage(argv[0]); return 2; }
   xemu_reset();
-  if (load_image(image) != 0) return 2;
-  xemu.rip = ENTRY;
-  xemu.rflags = 0x202;
-  xemu.cs = 0x8;
-  xemu.ss = 0x10;
-  printf("xemu: loaded %s at 0x%llx (%llu MiB RAM)\n", image,
-         (unsigned long long)ENTRY,
-         (unsigned long long)(XEMU_MEM_SIZE >> 20));
+  if (kernel_path) {
+    if (xemu_boot_kernel(kernel_path, cmdline) != 0) return 2;
+    xemu.rflags = 0x202;
+    xemu.cs = 0x8;
+    xemu.ss = 0x10;
+  } else {
+    if (load_image(image) != 0) return 2;
+    xemu.rip = ENTRY;
+    xemu.rflags = 0x202;
+    xemu.cs = 0x8;
+    xemu.ss = 0x10;
+    printf("xemu: loaded %s at 0x%llx (%llu MiB RAM)\n", image,
+           (unsigned long long)ENTRY,
+           (unsigned long long)(XEMU_MEM_SIZE >> 20));
+  }
+  (void)mem_mb;
 
   if (batch) {
     while (!xemu.halted && (long long)steps < max_steps) {
-      if (step_once() != 0) { dump_regs(); return 1; }
+      if (step_once() != 0) { dump_mem_and_exit(); dump_regs(); return 1; }
     }
   } else {
     monitor();
   }
+  dump_mem_and_exit();
   printf("xemu: %s after %lu instructions, rip=0x%llx, exit=%llu\n",
          xemu.halted ? "halted" : "stopped", steps,
          (unsigned long long)xemu.rip, (unsigned long long)(xemu_exit_code & 0xff));

@@ -32,10 +32,20 @@ void xemu_uart_reset(void) {
   }
 }
 
-/* Poll stdin for a new byte (non-blocking). Called once per instruction. */
+/* Poll stdin for a new byte (non-blocking).
+ *
+ * Called from the instruction loop, so it is deliberately cheap: the TTY is
+ * only touched every XEMU_UART_POLL_INTERVAL instructions and only when the
+ * guest has actually enabled receive interrupts. Reading every instruction
+ * costs a syscall per instruction and dominates runtime. */
+#define XEMU_UART_POLL_INTERVAL 1024ull
+
 void xemu_uart_poll(void) {
+  static uint64_t tick;
   if (!xemu_console_serial) return;
   if (uart[0].has_rx) return;
+  if ((uart[0].ier & 0x01) == 0) return;   /* nobody is listening */
+  if ((++tick % XEMU_UART_POLL_INTERVAL) != 0) return;
   unsigned char c;
   if (read(0, &c, 1) == 1) {
     uart[0].rx = c;
