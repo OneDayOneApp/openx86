@@ -22,6 +22,9 @@ CASES = [
     ("t50_uart", 0x50),
     ("t51_pit", 0x60),
     ("t52_portio", 0x70),
+    # L1: paging + exception mechanisms (bottom-up)
+    ("t60_pf_cr2", 0x60),
+    ("t61_early_idt", 0x61),
 ]
 
 

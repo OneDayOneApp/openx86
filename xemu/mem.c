@@ -1,6 +1,7 @@
 #include "xemu.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 int xemu_mem_read(uint64_t addr, void *buf, size_t n) {
   if (addr + n <= XEMU_MEM_SIZE) {
@@ -123,14 +124,25 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
   tlb_check_cr3();
   if (tlb_lookup(va, pa) == 0) { *errcode = 0; return 0; }
 
+  static int dbg = -1;
+  if (dbg < 0) dbg = getenv("XEMU_WALK") ? 1 : 0;
+  if (dbg && (va >> 12) == 0xC00)
+    fprintf(stderr, "[walk] va=0x%llx w=%d cr3=0x%llx\n",
+            (unsigned long long)va, write, (unsigned long long)xemu.cr3);
   uint64_t table = xemu.cr3 & ~0xfffull;
   for (int level = 0; level < 4; level++) {
     uint64_t idx = (va >> (12 + 9 * (3 - level))) & 0x1ff;
     uint64_t e;
-    if (xemu_mem_read(table + idx * 8, &e, 8) != 0) { *errcode = err; return -1; }
-    if (!(e & 1)) { *errcode = err; return -1; }
-    if (write && !(e & 2)) { *errcode = err | 1; return -1; }
-    if (fetch && (e & (1ull << 63)) && (xemu.efer & 0x800)) { *errcode = err | 1; return -1; }
+    if (xemu_mem_read(table + idx * 8, &e, 8) != 0) { *errcode = err; xemu.cr2 = va; return -1; }
+    if (dbg && (va >> 12) == 0xC00)
+      fprintf(stderr, "[walk]  lvl=%d table=0x%llx idx=%llu e=0x%llx\n",
+              level, (unsigned long long)table,
+              (unsigned long long)idx, (unsigned long long)e);
+    if (!(e & 1)) { *errcode = err; xemu.cr2 = va; return -1; }
+    if (write && !(e & 2)) { *errcode = err | 1; xemu.cr2 = va; return -1; }
+    if (fetch && (e & (1ull << 63)) && (xemu.efer & 0x800)) {
+      *errcode = err | 1; xemu.cr2 = va; return -1;
+    }
     if (level == 1 && (e & 0x80)) { /* 1 GiB */
       *pa = (e & 0xfffffc0000000ull) + (va & 0x3fffffffull);
       tlb_fill(va, *pa);
@@ -149,6 +161,7 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
     table = e & ~0xfffull;
   }
   *errcode = err;
+  xemu.cr2 = va;
   return -1;
 }
 
