@@ -36,6 +36,8 @@ CASES = [
     ("t72_ad_bits", 0x72),
     ("t73_rsvd", 0x73),
     ("t74_user_ok", 0x74),
+    # L3: a faulting stack push must leave CALL/RET atomically un-executed.
+    ("t75_call_fault", 0x75),
 ]
 
 

@@ -78,10 +78,17 @@ uint64_t xemu_ea(const XemuInst *d) {
   return a;
 }
 
+/* RSP at the start of the current instruction.  A faulting stack write must
+ * be rolled back: hardware delivers #PF with the frame of the *unmodified*
+ * instruction (RIP = the faulting instruction, RSP = its entry value), which
+ * is what Linux's fixup and restart paths rely on. */
+static uint64_t inst_entry_rsp;
+
 static uint64_t ld(uint64_t addr, int sz) {
   uint8_t b[8] = {0};
   if (xemu_vread(addr, b, sz) != 0) {
     if (!xemu_fault_pending) {
+      xemu.gpr[4] = inst_entry_rsp;
       xemu_raise_exc(14, xemu_fault_err, xemu.rip);
       xemu_fault_pending = 1;
     }
@@ -97,6 +104,7 @@ static void st(uint64_t addr, uint64_t v, int sz) {
   for (int i = 0; i < sz; i++) b[i] = (uint8_t)(v >> (8 * i));
   if (xemu_vwrite(addr, b, sz) != 0) {
     if (!xemu_fault_pending) {
+      xemu.gpr[4] = inst_entry_rsp;   /* roll the stack back before the frame */
       xemu_raise_exc(14, xemu_fault_err, xemu.rip);
       xemu_fault_pending = 1;
     }
@@ -241,9 +249,13 @@ static uint64_t shift_op(uint16_t op, uint64_t a, uint64_t cnt, int sz) {
 static void push_val(uint64_t v, int sz) {
   xemu.gpr[4] -= sz;
   st(xemu.gpr[4], v, sz);
+  /* st() already rolled RSP back to the instruction's entry value and raised
+   * #PF (which installed the handler's own stack in gpr[4]); touching RSP
+   * again here would clobber the trap frame pointer. */
 }
 static uint64_t pop_val(int sz) {
   uint64_t v = ld(xemu.gpr[4], sz);
+  if (xemu_fault_pending) return 0;   /* RSP already rolled back by ld */
   xemu.gpr[4] += sz;
   return v;
 }
@@ -294,6 +306,7 @@ static int do_string(const XemuInst *d) {
 int xemu_sse_exec(const XemuInst *d);
 
 int xemu_exec(const XemuInst *d) {
+  inst_entry_rsp = xemu.gpr[4];
   int sz = d->opsz;
   uint16_t op = d->op;
   if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
@@ -690,12 +703,14 @@ int xemu_exec(const XemuInst *d) {
                                            : read_op(d, 1, 8);
       int psz = d->opsz == 2 ? 2 : 8;
       push_val(xemu.rip + d->len, psz);
+      if (xemu_fault_pending) return 0;   /* keep the handler RIP */
       xemu.rip = tgt;
       return 0;
     }
     case Ops_RET: {
       int psz = d->opsz == 2 ? 2 : 8;
       uint64_t tgt = pop_val(psz);
+      if (xemu_fault_pending) return 0;   /* keep the handler RIP */
       if (d->b_kind == XK_IMM) xemu.gpr[4] += d->imm;
       xemu.rip = tgt;
       return 0;
@@ -1019,7 +1034,11 @@ int xemu_exec(const XemuInst *d) {
       /* The RTL IRET microcode always pops the 5-slot frame. */
       uint64_t vals[5];
       for (int i = 0; i < 5; i++) {
-        if (xemu_vread(xemu.gpr[4], &vals[i], 8) != 0) return -1;
+        if (xemu_vread(xemu.gpr[4], &vals[i], 8) != 0) {
+          xemu.gpr[4] = inst_entry_rsp;
+          xemu_raise_exc(14, xemu_fault_err, xemu.rip);
+          return 0;
+        }
         xemu.gpr[4] += 8;
       }
       int new_cpl = (int)(vals[1] & 3);

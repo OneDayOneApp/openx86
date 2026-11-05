@@ -92,6 +92,7 @@ static void init_tables(void) {
   for (int r = 1; r < 8; r++) primary[0x90 + r] = DI(Ops_XCHG, .modrm = 0, .dir = 1, .form = FORM_SPECIAL);
   primary[0x98] = DI(Ops_CBW, .modrm = 0);
   primary[0x99] = DI(Ops_CDQ, .modrm = 0);
+  primary[0x9b] = DI(Ops_FWAIT, .modrm = 0);
   primary[0x9c] = DI(Ops_PUSHF, .modrm = 0);
   primary[0x9d] = DI(Ops_POPF, .modrm = 0);
   primary[0x9e] = DI(Ops_SAHF, .modrm = 0);
