@@ -105,6 +105,18 @@ static void init_tables(void) {
   primary[0xd2] = DI(Ops_UNDEF, .modrm = 1, .group = G_2, .force8 = 1);
   primary[0xd3] = DI(Ops_UNDEF, .modrm = 1, .group = G_2);
   primary[0xd7] = DI(Ops_UNDEF, .modrm = 0);
+  primary[0xe4] = DI(Ops_IN, .modrm = 0, .imm = IMM_8);
+  primary[0xe5] = DI(Ops_IN, .modrm = 0, .imm = IMM_8);
+  primary[0xe6] = DI(Ops_OUT, .modrm = 0, .imm = IMM_8);
+  primary[0xe7] = DI(Ops_OUT, .modrm = 0, .imm = IMM_8);
+  primary[0xec] = DI(Ops_IN, .modrm = 0);
+  primary[0xed] = DI(Ops_IN, .modrm = 0);
+  primary[0xee] = DI(Ops_OUT, .modrm = 0);
+  primary[0xef] = DI(Ops_OUT, .modrm = 0);
+  primary[0x6c] = DI(Ops_INS, .modrm = 0);
+  primary[0x6d] = DI(Ops_INS, .modrm = 0);
+  primary[0x6e] = DI(Ops_OUTS, .modrm = 0);
+  primary[0x6f] = DI(Ops_OUTS, .modrm = 0);
   primary[0xe0] = DI(Ops_LOOPNE, .modrm = 0, .imm = IMM_8);
   primary[0xe1] = DI(Ops_LOOPE, .modrm = 0, .imm = IMM_8);
   primary[0xe2] = DI(Ops_LOOP, .modrm = 0, .imm = IMM_8);
@@ -577,6 +589,24 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (op == Ops_CVTTSD2SI || op == Ops_CVTTSS2SI || op == Ops_CVTSD2SI) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);
     out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
+  }
+  if (op == Ops_IN || op == Ops_OUT || op == Ops_INS || op == Ops_OUTS) {
+    /* Width from the opcode's low bit plus any 0x66 prefix:
+       E4/E6/6C/6E = byte, E5/E7/6D/6F = (d/q)word. */
+    int wide = (opcode & 1) != 0;
+    out->io_sz = (uint8_t)(wide ? (p66 ? 2 : 4) : 1);
+    if (op == Ops_IN) {
+      out->a_kind = XK_GPR; out->a_idx = 0;             /* accumulator */
+      out->b_kind = XK_NONE;
+      out->port_imm = (uint8_t)(base.imm == IMM_8);
+    } else if (op == Ops_OUT) {
+      out->a_kind = XK_GPR; out->a_idx = 0;
+      out->b_kind = XK_NONE;
+      out->port_imm = (uint8_t)(base.imm == IMM_8);
+    } else {
+      out->a_kind = XK_NONE; out->b_kind = XK_NONE;
+    }
+    out->opsz = out->io_sz;
   }
   if (op == Ops_LTR) {
     out->a_kind = XK_GPR; out->a_idx = rm | (rexB << 3);

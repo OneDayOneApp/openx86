@@ -1,3 +1,20 @@
+## Unreleased — L0 设备模型
+
+### 新增
+
+- 端口 IO：`IN`/`OUT`/`INS`/`OUTS`（8/16/32 位，支持 `REP`）与分发框架
+- 16550 UART：完整寄存器组，THR 直通 stdout，stdin 轮询进 RBR 并触发 IRQ4
+- 8259A PIC：ICW1-4、OCW1/OCW2/OCW3、IRR/ISR、主从级联
+- 8254 PIT：模式 2/3、计数器锁存读、通道 0 驱动 IRQ0
+- 未映射端口读返回全 1，写为无副作用
+- 物理内存可配置（`-DXEMU_MEM_SIZE_MB=N`，默认 16MiB）
+- 新测试：`t50_uart`、`t51_pit`、`t52_portio`；`make xemu-dev-test` 5/5
+
+### 说明
+
+- PCA/PIC/PIT 由 `xemu_after_inst()` 在每条指令后推进，
+  IRQ 在指令边界经 PIC 仲裁后注入，避免撕裂
+
 ## Unreleased — Bochs 独立黄金基准
 
 ### 新增

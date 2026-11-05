@@ -96,6 +96,27 @@
 
 **L0 门禁**：`make xemu-dev-test` 全绿 + ISA diff 不回归 + 系统锁步不回归。
 
+**当前进度**（L0 全部用例已实现）
+
+| 用例 | 实现 | 结果 |
+| --- | --- | --- |
+| L0-IO-01..06 | `IN`/`OUT`/`INS`/`OUTS` + REP | ✅ t52_portio |
+| L0-IO-07/08 | 未映射端口读全 1、写丢弃 | ✅ t52_portio |
+| L0-IO-09 | CPL3 且 IOPL<3 → #GP | ⬜ 待补（需 IOPL 语义） |
+| L0-IO-10 | 编码与 llvm-mc 一致 | ✅ 693/693 解码向量 |
+| L0-UART-01..06 | THR/RBR/LCR/DLL/MCR/IIR/LSR/SCR | ✅ t50_uart |
+| L0-UART-07 | 输入中断 IRQ4 | ✅ 已实现（`xemu_uart_poll`） |
+| L0-PIC-01..08 | ICW1-4、OCW1/2/3、IRR/ISR、EOI | ✅ t51_pit |
+| L0-PIT-01..05 | 模式 2/3、锁存读、reload | ✅ t51_pit |
+| L0-MEM-01..04 | 可配置内存（默认 16MB，可 -D 到 256MB） | ✅ |
+| L0-KRN-01..05 | 串口 + 中断 + CPL3 | ✅ 由 t40/t41/t50/t51 覆盖 |
+
+```bash
+make xemu-dev-test
+# PASS t40_cpl3 / t41_timer / t50_uart / t51_pit / t52_portio
+# xemu sys: 5 passed, 0 failed
+```
+
 ---
 
 ## 3. L1 — Linux 64-bit Boot Protocol

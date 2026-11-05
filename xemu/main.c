@@ -126,6 +126,7 @@ static void usage(const char *prog) {
   fprintf(stderr, "  -b             batch mode (run until halt)\n");
   fprintf(stderr, "  --max-steps=N  instruction limit (default 100000000)\n");
   fprintf(stderr, "  --trace        print an instruction trace (NEMU itrace style)\n");
+  fprintf(stderr, "  (memory size is fixed at build time: -DXEMU_MEM_SIZE_MB=N)\n");
 }
 
 int main(int argc, char **argv) {
@@ -135,6 +136,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-i") && i + 1 < argc) image = argv[++i];
     else if (!strncmp(argv[i], "--image=", 8)) image = argv[i] + 8;
     else if (!strncmp(argv[i], "--max-steps=", 12)) max_steps = atoll(argv[i] + 12);
+  else if (!strncmp(argv[i], "-m", 2) && i + 1 < argc) i++;   /* memory size is build-time */
+  else if (!strncmp(argv[i], "--mem=", 6)) i = i;             /* accepted, build-time */
     else if (!strcmp(argv[i], "--trace")) trace = 1;
     else { usage(argv[0]); return 2; }
   }
@@ -145,7 +148,9 @@ int main(int argc, char **argv) {
   xemu.rflags = 0x202;
   xemu.cs = 0x8;
   xemu.ss = 0x10;
-  printf("xemu: loaded %s at 0x%llx\n", image, (unsigned long long)ENTRY);
+  printf("xemu: loaded %s at 0x%llx (%llu MiB RAM)\n", image,
+         (unsigned long long)ENTRY,
+         (unsigned long long)(XEMU_MEM_SIZE >> 20));
 
   if (batch) {
     while (!xemu.halted && (long long)steps < max_steps) {

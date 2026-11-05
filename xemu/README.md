@@ -77,6 +77,21 @@ make sys-diff-test
 # 10 x PASS
 ```
 
+## L0 设备模型（端口 IO / UART / PIC / PIT）
+
+- `IN`/`OUT`/`INS`/`OUTS`（8/16/32 位，含 `REP`），端口分发框架
+- 16550 UART（`0x3F8`）：THR/RBR/IER/IIR/LCR/MCR/LSR/SCR/DLL/DLM
+  - 写 THR 直通 stdout（`\n` → `\r\n`），stdin 非阻塞轮询进 RBR 并触发 IRQ4
+- 8259A PIC（`0x20/0x21`、`0xA0/0xA1`）：ICW1-4、OCW1/OCW2/OCW3、IRR/ISR、级联
+- 8254 PIT（`0x40-0x43`）：模式 2/3、锁存读、通道 0 → IRQ0
+- 未映射端口读全 1、写丢弃
+- 物理内存可配置：`-DXEMU_MEM_SIZE_MB=256`（默认 16）
+
+```bash
+make xemu-dev-test
+# xemu sys: 5 passed, 0 failed
+```
+
 ## P3 系统模式（CPL3 / TSS / 外部 IRQ / timer）
 
 - `LGDT` / `LIDT` / `LTR`，GDT 描述符解析
