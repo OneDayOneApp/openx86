@@ -9,6 +9,7 @@ XEMU 是自研 x86-64 参考模拟器，导出 NEMU 风格 `difftest_*` ABI，�
 | [roadmap.md](roadmap.md) | v2 | 路线图：对齐 NEMU 功能，Unicorn 作为指令验证标准，P1–P6 阶段 |
 | [linux-plan.md](linux-plan.md) | v3 | Linux 启动计划：L0–L4（端口 IO/设备、boot protocol、x87、内存权限、工具链） |
 | [linux-testplan.md](linux-testplan.md) | v1 | Linux 测试计划：156 个用例（TC 编号）、回归门禁、失败归档规范 |
+| [architecture.md](architecture.md) | v1 | **软件架构图**：五层结构、模块清单、数据流、存储层、三种使用形态、验证层级、已知偏离与缺口 |
 
 相关文档：
 
