@@ -5,6 +5,8 @@ XemuState xemu;
 uint8_t xemu_mem[XEMU_MEM_SIZE];
 
 void xemu_reset(void) {
+  /* Default IA32_PAT: WB WT UC- UC WB WT UC- UC. */
+  xemu.pat = 0x0007040600070406ull;
   xemu_tlb_flush();
   xemu.dr[6] = 0xffff0ff0ull;
   xemu.dr[7] = 0x00000400ull;

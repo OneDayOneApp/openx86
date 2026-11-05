@@ -1123,6 +1123,8 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000100: xemu.fs_base = v; break;
         case 0xc0000101: xemu.gs_base = v; break;
         case 0xc0000102: xemu.kernel_gs_base = v; break;
+        case 0x00000277: xemu.pat = v; break;      /* IA32_PAT */
+        case 0x000000fe: xemu.mtrr_def_type = v; break;
         case 0x00000174: xemu.sysenter_cs = v & 0xffff; break;
         case 0x00000175: xemu.sysenter_esp = v; break;
         case 0x00000176: xemu.sysenter_eip = v; break;
@@ -1141,11 +1143,24 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000100: v = xemu.fs_base; break;
         case 0xc0000101: v = xemu.gs_base; break;
         case 0xc0000102: v = xemu.kernel_gs_base; break;
+        case 0x00000277: v = xemu.pat; break;
+        case 0x000000fe: v = xemu.mtrr_def_type; break;
+        /* IA32_MTRRCAP and the MTRRphys{Base,Mask} pairs read back as zero:
+           the memory model is a single cacheable RAM range, and CPUID does
+           not advertise MTRR (docs/PRD.md 5.7), so no consumer can rely on
+           per-range types. */
+        case 0x000002ff: v = 0; break;
         case 0x00000174: v = xemu.sysenter_cs; break;
         case 0x00000175: v = xemu.sysenter_esp; break;
         case 0x00000176: v = xemu.sysenter_eip; break;
         case 0x00000010: v = xemu.tsc; break;      /* IA32_TSC */
         case 0x0000001b: v = 0; break;             /* IA32_APIC_BASE: no APIC */
+        case 0x00000200: case 0x00000201: case 0x00000202: case 0x00000203:
+        case 0x00000204: case 0x00000205: case 0x00000206: case 0x00000207:
+        case 0x00000208: case 0x00000209: case 0x0000020a: case 0x0000020b:
+        case 0x0000020c: case 0x0000020d: case 0x0000020e: case 0x0000020f:
+          v = 0; break;                            /* MTRRphysBase/Mask */
+        case 0x000001d9: v = 0; break;             /* IA32_DEBUGCTL */
         default: break;
       }
       xemu.gpr[0] = v & 0xffffffffu;

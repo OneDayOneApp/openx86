@@ -42,6 +42,7 @@ typedef struct {
   uint64_t cs, ss, ds, es, fs, gs;
   uint64_t efer, star, lstar, sfmask;
   uint64_t sysenter_cs, sysenter_esp, sysenter_eip;
+  uint64_t pat, mtrr_def_type;   /* IA32_PAT / IA32_MTRR_DEF_TYPE */
   uint64_t fs_base, gs_base, kernel_gs_base;
   uint32_t mxcsr;
   uint64_t dr[8];   /* debug registers */
