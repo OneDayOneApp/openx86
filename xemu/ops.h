@@ -192,6 +192,9 @@ enum {
   Ops_LAR, Ops_XSETBV, Ops_XSAVES, Ops_XSAVEC, Ops_XRSTORS, Ops_LKGS,
   Ops_MONITOR, Ops_MWAIT, Ops_TILERELEASE, Ops_RDFSBASE, Ops_RDGSBASE,
   Ops_WRFSBASE, Ops_WRGSBASE, Ops_UD1, Ops_SYSENTER, Ops_SYSEXIT,
+  /* SSE additions that the RTL subset core does not model; they must sit
+     above the shared range so no existing number moves. */
+  Ops_SIMD_CMP = 400, Ops_PSHIFT_IMM,
   Ops_UNDEF = 255,
 };
 

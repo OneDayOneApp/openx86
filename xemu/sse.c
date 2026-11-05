@@ -247,6 +247,84 @@ int xemu_sse_exec(const XemuInst *d) {
       put_vec(d->a_idx, r);
       break;
     }
+    /* 0F C2 CMPPS/CMPPD/CMPSS/CMPSD: predicate in the immediate byte.
+       0 EQ 1 LT 2 LE 3 UNORD 4 NEQ 5 NLT 6 NLE 7 ORD */
+    case Ops_SIMD_CMP: {
+      int pred = (int)(d->imm & 7);
+      int nlanes = (simd == S_SS) ? 1 : (simd == S_SD) ? 1 : (simd == S_PS ? 4 : 2);
+      Vec128 r = zero_vec();
+      for (int i = 0; i < nlanes; i++) {
+        int take;
+        if (simd == S_SS || simd == S_PS) {
+          float a0 = dst.f[i], b0 = src.f[i];
+          int unord = (isnan(a0) || isnan(b0));
+          take = pred == 0 ? (a0 == b0) : pred == 1 ? (a0 < b0)
+               : pred == 2 ? (a0 <= b0) : pred == 3 ? unord
+               : pred == 4 ? !(a0 == b0) : pred == 5 ? !(a0 < b0)
+               : pred == 6 ? !(a0 <= b0) : !unord;
+          if (pred != 3 && pred != 4 && unord) take = 0;
+          r.u[i / 2] |= (uint64_t)(take ? 0xffffffffu : 0) << (32 * (i % 2));
+        } else {
+          double a0 = dst.d[i], b0 = src.d[i];
+          int unord = (isnan(a0) || isnan(b0));
+          take = pred == 0 ? (a0 == b0) : pred == 1 ? (a0 < b0)
+               : pred == 2 ? (a0 <= b0) : pred == 3 ? unord
+               : pred == 4 ? !(a0 == b0) : pred == 5 ? !(a0 < b0)
+               : pred == 6 ? !(a0 <= b0) : !unord;
+          if (pred != 3 && pred != 4 && unord) take = 0;
+          r.u[i] = take ? ~0ull : 0;
+        }
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
+
+    /* 66 0F 71/72/73 shift by immediate.  `cond` packs (width << 4) | reg:
+         width 1 = word (71), 2 = dword (72), 3 = qword (73)
+         reg 2 = SRL, 3 = SRLDQ (73 only), 4 = SRA (word/dword only),
+         reg 6 = SLL, 7 = SLLDQ (73 only). */
+    case Ops_PSHIFT_IMM: {
+      int count = (int)(d->imm & 0xff);
+      int width = (d->cond >> 4) & 0x0f;   /* 1, 2 or 3 */
+      int grp = d->cond & 0x0f;            /* the ModRM reg field */
+      Vec128 r = zero_vec();
+      if (count > 64) count = 64;
+      if (grp == 3 || grp == 7) {
+        /* PSRLDQ / PSLLDQ: whole-register byte shift, zero filled. */
+        int bytes = count > 16 ? 16 : count;
+        uint8_t tmp[16] = {0};
+        uint8_t srcb[16];
+        memcpy(srcb, &dst, 16);
+        if (grp == 3) for (int i = 0; i < 16 - bytes; i++) tmp[i] = srcb[i + bytes];
+        else          for (int i = bytes; i < 16; i++) tmp[i] = srcb[i - bytes];
+        memcpy(&r, tmp, 16);
+      } else {
+        int elem = (width == 1) ? 2 : (width == 2) ? 4 : 8;
+        int nl = 16 / elem;
+        int bits = elem * 8;
+        for (int i = 0; i < nl; i++) {
+          uint64_t v = get_lane(dst, i, elem);
+          uint64_t out;
+          if (count >= bits) {
+            if (grp == 4) {            /* PSRA: replicate the sign bit */
+              int64_t sv = (int64_t)(v << (64 - bits)) >> (64 - bits);
+              out = (uint64_t)(sv >> (bits - 1));
+            } else out = 0;
+          } else if (grp == 2) {       /* SRL */
+            out = v >> count;
+          } else if (grp == 4) {       /* SRA */
+            int64_t sv = (int64_t)(v << (64 - bits)) >> (64 - bits);
+            out = (uint64_t)(sv >> count);
+          } else {                     /* SLL */
+            out = v << count;
+          }
+          set_lane(&r, i, elem, out);
+        }
+      }
+      put_vec(d->a_idx, r);
+      break;
+    }
+
     case Ops_PCMPEQB: case Ops_PCMPEQW: case Ops_PCMPEQD:
     case Ops_PCMPGTB: case Ops_PCMPGTW: case Ops_PCMPGTD: {
       int bytes = (op == Ops_PCMPEQB || op == Ops_PCMPGTB) ? 1 :

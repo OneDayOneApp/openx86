@@ -50,7 +50,11 @@ int main(int argc, char **argv) {
     memset(&inst, 0, sizeof(inst));
     int rc = xemu_decode(SCRATCH, &inst);
     total++;
-    if (rc != 0 || inst.op == Ops_UNDEF || inst.illegal || inst.op >= 0xff) {
+    /* Only a real failure counts.  `op >= 0xff` used to be a stand-in for
+       "unassigned", but the XEMU-only expansion now numbers real opcodes from
+       300 up (and FXSAVE from 260), so that test flagged working instructions
+       such as BSWAP (311) and PAUSE. */
+    if (rc != 0 || inst.op == Ops_UNDEF || inst.illegal) {
       unsupported++;
       printf("%llx %s %s\n", addr, hex, mnem);
     }

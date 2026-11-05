@@ -5,7 +5,10 @@
 #include <stdlib.h>
 
 /* Immediate classes (mirror ImmKind). */
-enum { IMM_NONE = 0, IMM_8 = 1, IMM_Z = 2, IMM_32 = 3, IMM_64 = 4, IMM_16 = 5 };
+enum { IMM_NONE = 0, IMM_8 = 1, IMM_Z = 2, IMM_32 = 3, IMM_64 = 4, IMM_16 = 5,
+       /* Address-sized immediate (MOV moffs): 8 bytes in 64-bit mode, 4 with a
+          0x67 prefix, independent of the data width the instruction uses. */
+       IMM_ADDR = 6 };
 /* Decode forms (mirror DecodeForm). */
 enum { FORM_NORMAL = 0, FORM_MOVZX8 = 1, FORM_MOVZX16 = 2, FORM_MOVSX8 = 3,
        FORM_MOVSX16 = 4, FORM_MOVSXD = 5, FORM_ACC = 6, FORM_SPECIAL = 7 };
@@ -87,7 +90,7 @@ static void init_tables(void) {
      0x14/0x15 ADC, 0x1C/0x1D SBB, 0x24/0x25 AND, 0x2C/0x2D SUB,
      0x34/0x35 XOR, 0x3C/0x3D CMP. The accumulator is always operand A. */
   {
-    static const uint8_t alu[8] = {Ops_ADD, Ops_OR, Ops_ADC, Ops_SBB,
+    static const uint16_t alu[8] = {Ops_ADD, Ops_OR, Ops_ADC, Ops_SBB,
                                    Ops_AND, Ops_SUB, Ops_XOR, Ops_CMP};
     for (int i = 0; i < 8; i++) {
       primary[0x04 + i * 8] = DI(alu[i], .modrm = 0, .imm = IMM_8, .force8 = 1);
@@ -173,7 +176,7 @@ static void init_tables(void) {
   }
   /* 0F AE: FXSAVE/FXRSTOR, LFENCE/MFENCE/SFENCE, CLFLUSH, MXCSR access. */
   {
-    static const uint8_t g15[8] = {
+    static const uint16_t g15[8] = {
       Ops_FXSAVE,    /* /0 FXSAVE  */
       Ops_FXRSTOR,   /* /1 FXRSTOR */
       Ops_LDMXCSR,   /* /2 LDMXCSR */
@@ -266,6 +269,12 @@ static void init_tables(void) {
   set(twobyte, 0x6f, DI(Ops_MOVDQ, .modrm = 1, .dir = 1, .sse_sel = 1));
   set(twobyte, 0x7e, DI(Ops_MOVD, .modrm = 1, .dir = 0, .store = 1, .sse_sel = 1));
   set(twobyte, 0x7f, DI(Ops_MOVDQ, .modrm = 1, .dir = 0, .store = 1, .sse_sel = 1));
+  /* A0..A3: MOV AL/eAX <-> moffs.  The address is an immediate, not a ModRM
+     operand, so these carry no ModRM byte at all. */
+  primary[0xa0] = DI(Ops_MOV, .modrm = 0, .imm = IMM_ADDR);
+  primary[0xa1] = DI(Ops_MOV, .modrm = 0, .imm = IMM_ADDR);
+  primary[0xa2] = DI(Ops_MOV, .modrm = 0, .imm = IMM_ADDR);
+  primary[0xa3] = DI(Ops_MOV, .modrm = 0, .imm = IMM_ADDR);
   set(twobyte, 0xa2, DI(Ops_CPUID, .modrm = 0));
   set(twobyte, 0xaf, DI(Ops_IMUL, .modrm = 1, .dir = 1));
   set(twobyte, 0xb6, DI(Ops_MOVZX, .modrm = 1, .dir = 1, .form = FORM_MOVZX8));
@@ -531,19 +540,19 @@ static DInfo x87_group(int esc, int reg, int mod, int rm) {
         }
       }
       if (reg == 5) {
-        static const uint8_t k[8] = {Ops_FLD1, Ops_FLDL2T, Ops_FLDL2E,
+        static const uint16_t k[8] = {Ops_FLD1, Ops_FLDL2T, Ops_FLDL2E,
                                      Ops_FLDPI, Ops_FLDLG2, Ops_FLDLN2,
                                      Ops_FLDZ, Ops_UNDEF};
         if (k[rm] != Ops_UNDEF) return x87m(k[rm], 0);
       }
       if (reg == 6) {
-        static const uint8_t t[8] = {Ops_F2XM1, Ops_FYL2X, Ops_FPTAN,
+        static const uint16_t t[8] = {Ops_F2XM1, Ops_FYL2X, Ops_FPTAN,
                                      Ops_FPATAN, Ops_FXTRACT, Ops_FPREM1,
                                      Ops_FDECSTP, Ops_FINCSTP};
         return x87m(t[rm], 0);
       }
       if (reg == 7) {
-        static const uint8_t t[8] = {Ops_FPREM, Ops_FYL2XP1, Ops_FSQRT,
+        static const uint16_t t[8] = {Ops_FPREM, Ops_FYL2XP1, Ops_FSQRT,
                                      Ops_FSINCOS, Ops_FRNDINT, Ops_FSCALE,
                                      Ops_FSIN, Ops_FCOS};
         return x87m(t[rm], 0);
@@ -796,7 +805,8 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     }
   }
   /* F3 0F B8 POPCNT, 0F C7 /6 RDRAND, /7 RDSEED. */
-  if (is0F && opcode == 0x18) op = Ops_PREFETCH;
+  /* 0F 18 PREFETCHT0/T1/T2/NTA and 0F 0D PREFETCHW are pure hints. */
+  if (is0F && (opcode == 0x18 || opcode == 0x0d)) op = Ops_PREFETCH;
   if (is0F && opcode == 0xc7) {
     if (reg == 6) op = Ops_RDRAND;
     else if (reg == 7) op = Ops_RDSEED;
@@ -815,12 +825,12 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     }
   }
   /* F2 0F 00 /6: LKGS (LAM-related; accept as a no-op). */
-  if (is0F && opcode == 0x00 && rm_is_reg == 0 && rep == 2 && reg == 6)
-    op = Ops_LKGS;
+  /* F2 0F 00 /6 LKGS, with either a register or a memory operand. */
+  if (is0F && opcode == 0x00 && rep == 2 && reg == 6) op = Ops_LKGS;
   /* F3 90 is PAUSE (the REP prefix plus NOP). */
   if (is0F == 0 && opcode == 0x90 && rep == 1) op = Ops_PAUSE;
   if (is0F && opcode == 0xba) {
-    static const int btops[8] = {0,0,0,0,Ops_BT,Ops_BTS,Ops_BTR,Ops_BTC};
+    static const uint16_t btops[8] = {0,0,0,0,Ops_BT,Ops_BTS,Ops_BTR,Ops_BTC};
     op = btops[reg];
     imm_kind = IMM_8;
     dir = 0;
@@ -828,6 +838,15 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   if (is0F && opcode == 0xc7 && reg == 1) {
     op = Ops_CMPXCHG8B;
     dir = 0;
+  }
+  /* 0F C2 CMPPS/CMPPD/CMPSS/CMPSD: the immediate byte selects the predicate. */
+  if (is0F && opcode == 0xc2 && !is3) op = Ops_SIMD_CMP;
+  /* 66 0F 71/72/73 shift-by-immediate.  The opcode byte picks the element
+     width (word/dword/qword) and the ModRM reg field picks the operation;
+     both are packed into `cond` for the executor. */
+  if (is0F && p66 && (opcode == 0x71 || opcode == 0x72 || opcode == 0x73)) {
+    op = Ops_PSHIFT_IMM;
+    imm_kind = IMM_8;
   }
   if (is0F && opcode == 0x70) {
     if (p66) op = Ops_PSHUFD;
@@ -861,6 +880,7 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     case IMM_32: imm_len = 4; break;
     case IMM_64: imm_len = (opsz == 2) ? 2 : (rexW ? 8 : 4); break;
     case IMM_16: imm_len = 2; break;
+    case IMM_ADDR: imm_len = p67 ? 4 : 8; break;
     default: imm_len = 0; break;
   }
   int imm_off = disp_off + disp_len;
@@ -874,6 +894,8 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     case IMM_64: imm = (opsz == 2) ? read_le(&buf[imm_off], 2)
                                   : (rexW ? read_le(&buf[imm_off], 8)
                                           : read_le(&buf[imm_off], 4)); break;
+    case IMM_ADDR: imm = p67 ? read_le(&buf[imm_off], 4)
+                             : read_le(&buf[imm_off], 8); break;
     default: imm = 0; break;
   }
   int inst_len = imm_off + imm_len;
@@ -1184,6 +1206,41 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
     out->a_kind = XK_GPR; out->a_idx = rm | (rexB << 3);
     out->b_kind = XK_NONE;
     out->opsz = 2;
+  }
+  if (base.imm == IMM_ADDR && !is0F) {
+    /* MOV moffs: absolute address, no registers involved. */
+    int is_store = (opcode == 0xa2 || opcode == 0xa3);
+    int byte_form = (opcode == 0xa0 || opcode == 0xa2);
+    out->opsz = byte_form ? 1 : opsz_bytes;
+    out->memsz = out->opsz;
+    out->disp = (int64_t)imm;
+    out->has_base = 0;
+    out->has_index = 0;
+    out->rip_rel = 0;
+    if (is_store) {
+      out->a_kind = XK_MEM; out->a_idx = 0;
+      out->b_kind = XK_GPR; out->b_idx = 0;
+    } else {
+      out->a_kind = XK_GPR; out->a_idx = 0;
+      out->b_kind = XK_MEM; out->b_idx = 0;
+    }
+    out->illegal = 0;
+  }
+  if (op == Ops_SIMD_CMP) {
+    out->a_kind = XK_XMM; out->a_idx = reg | (rexR << 3);
+    out->b_kind = rm_is_reg ? XK_XMM : XK_MEM; out->b_idx = rm | (rexB << 3);
+    out->simd = p66 ? SIMD_PD : (rep == 2 ? SIMD_SD : (rep == 1 ? SIMD_SS : SIMD_PS));
+    out->memsz = out->simd == SIMD_SS ? 4 : (out->simd == SIMD_SD ? 8 : 16);
+    out->opsz = 16;
+    out->illegal = 0;
+  }
+  if (op == Ops_PSHIFT_IMM) {
+    out->a_kind = XK_XMM; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE;
+    out->opsz = 16;
+    out->memsz = 16;
+    out->cond = (uint8_t)(reg | ((opcode - 0x70) << 4));
+    out->illegal = 0;
   }
   if (op == Ops_PMOVMSKB) {
     out->a_kind = XK_GPR; out->a_idx = reg | (rexR << 3);

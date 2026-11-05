@@ -512,7 +512,8 @@ int xemu_exec(const XemuInst *d) {
     return 0;
   }
   if ((op >= Ops_MOVD && op <= Ops_CVTTPD2DQ) ||
-      (op >= Ops_PADDB && op <= Ops_MOVNTDQ)) return xemu_sse_exec(d);
+      (op >= Ops_PADDB && op <= Ops_MOVNTDQ) ||
+      op == Ops_SIMD_CMP || op == Ops_PSHIFT_IMM) return xemu_sse_exec(d);
   switch (op) {
     case Ops_MOVS: case Ops_STOS: case Ops_LODS: case Ops_SCAS: case Ops_CMPS:
       do_string(d);

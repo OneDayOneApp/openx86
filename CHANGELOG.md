@@ -1,3 +1,26 @@
+
+### 后续：补完剩余扫描缺口
+
+修完 x87 后再扫，发现几处独立问题（都与"表项被字节截断"这一类有关）：
+
+- **`0F AE` 组表被截断**：`g15[]` 是 `uint8_t`，而 `Ops_FXSAVE` 同批改动里挪到了
+  **260**，于是 `260 & 0xFF = 4 = Ops_MOVSXD`——`FXSAVE` 静默解成 `MOVSXD`。
+  所有 opcode 表（`alu`/`g15`/`k`/`t`/`btops`）统一改成 `uint16_t`。
+  这是 `ops.h` 里"op 至少 16 位"注释警告过的同一类错误。
+- **`0F C2` CMPPS/CMPPD/CMPSS/CMPSD**：未实现（busybox 用 `cmpltsd`）。按 8 个谓词
+  实现，新增 `Ops_SIMD_CMP`。
+- **`66 0F 71/72/73` 立即数移位组**：未实现（busybox 用 `psrlq`）。实现 PSRL/PSRA/
+  PSLL 的字/双字/四字形式与 PSRLDQ/PSLLDQ，新增 `Ops_PSHIFT_IMM`。
+- **`A0`–`A3` MOV moffs**：完全没有解码表项。新增地址宽度的立即数类别 `IMM_ADDR`
+  （64 位模式下 8 字节，`0x67` 前缀下 4 字节，与数据宽度解耦）。
+- **`0F 0D` PREFETCHW**、**`F2 0F 00 /6` LKGS（寄存器形式）**：补上。
+- `isa_scan` 的判据 `op >= 0xff` 已过时（XEMU 私有指令现在从 300 起编号），
+  导致 BSWAP/PAUSE 被误报；改为只看 `op == Ops_UNDEF || illegal`。
+
+扫描结果：**busybox 245710 条指令 0 条缺失**；内核 3050325 条中剩 15 条，全部是
+CPUID 未宣告的特性（`XSAVE`/`XRSTOR`/`INVPCID`/`TILERELEASE`），在 `/proc/cpuinfo`
+的 flags 里确实没有，真机同样会 `#UD`——属于正确行为而非缺口。
+
 ## Unreleased — x87 寄存器形式（D9–DF）修复
 
 `make xemu-isa-scan` 扫 busybox 时报出 `fchs`/`fabs` 缺失，追下去发现是一整片
