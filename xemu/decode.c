@@ -9,7 +9,7 @@ enum { FORM_NORMAL = 0, FORM_MOVZX8 = 1, FORM_MOVZX16 = 2, FORM_MOVSX8 = 3,
        FORM_MOVSX16 = 4, FORM_MOVSXD = 5, FORM_ACC = 6, FORM_SPECIAL = 7 };
 /* Opcode groups (mirror OpcodeGroup). */
 enum { G_NONE = 0, G_1 = 1, G_2 = 2, G_3 = 3, G_4 = 4, G_5 = 5, G_11 = 6, G_1A = 7,
-       G_X87 = 8 };   /* G_X87 + n for opcodes D8+n */
+       G_X87 = 8, G_15 = 9 };   /* G_X87 + n for opcodes D8+n */
 /* SIMD kinds (mirror SimdKind). */
 enum { SIMD_NONE = 0, SIMD_SS = 1, SIMD_SD = 2, SIMD_PS = 3, SIMD_PD = 4, SIMD_DQ = 5 };
 
@@ -140,6 +140,21 @@ static void init_tables(void) {
   for (int i = 0; i < 8; i++) {
     primary[0xd8 + i] = DI(Ops_UNDEF, .modrm = 1, .group = (uint8_t)(G_X87 + i));
   }
+  /* 0F AE: FXSAVE/FXRSTOR, LFENCE/MFENCE/SFENCE, CLFLUSH, MXCSR access. */
+  {
+    static const uint8_t g15[8] = {
+      Ops_FXSAVE,    /* /0 FXSAVE  */
+      Ops_FXRSTOR,   /* /1 FXRSTOR */
+      Ops_LDMXCSR,   /* /2 LDMXCSR */
+      Ops_STMXCSR,   /* /3 STMXCSR */
+      Ops_UNDEF,     /* /4 XSAVE (unsupported) */
+      Ops_LFENCE,    /* /5 LFENCE  */
+      Ops_MFENCE,    /* /6 MFENCE  */
+      Ops_CLFLUSH,   /* /7 CLFLUSH */
+    };
+    for (int i = 0; i < 8; i++) groups[G_15 - 1][i] = DI(g15[i], .modrm = 1);
+  }
+  set(twobyte, 0xae, DI(Ops_UNDEF, .modrm = 1, .group = G_15));
   primary[0xe0] = DI(Ops_LOOPNE, .modrm = 0, .imm = IMM_8);
   primary[0xe1] = DI(Ops_LOOPE, .modrm = 0, .imm = IMM_8);
   primary[0xe2] = DI(Ops_LOOP, .modrm = 0, .imm = IMM_8);

@@ -6,8 +6,13 @@
 int xemu_console_serial = 1;
 int xemu_trace_port = 0;
 uint64_t xemu_port_out_count = 0;
+uint64_t xemu_port_in_count = 0;
 
 int xemu_port_in(uint32_t port, int size, uint64_t *val) {
+  xemu_port_in_count++;
+  if (xemu_trace_port)
+    fprintf(stderr, "[port] in  %u (%d bits) rip=0x%llx\n",
+            port, size * 8, (unsigned long long)xemu.rip);
   if (port >= XEMU_PORT_UART && port <= XEMU_PORT_UART + 7) {
     return xemu_uart_in(port - XEMU_PORT_UART, size, val);
   }

@@ -15,8 +15,16 @@ static const char *cmdline = "console=ttyS0 earlyprintk=serial";
 static unsigned mem_mb = 0;
 static int batch = 0;
 static int trace = 0;
+static int pc_seen_add(uint64_t v);
+
 static int trace_cr = 0;
 static const char *watch_pc = NULL;
+static const char *find_str = NULL;
+static const char *stop_at = NULL;
+static int pc_unique = 0;
+static int pc_ring = 0;
+static uint64_t *pc_ring_buf;
+static size_t pc_ring_pos;
 static const char *dump_mem = NULL;
 static unsigned long steps;
 
@@ -79,6 +87,32 @@ static int step_once(void) {
       fprintf(stderr, "pc in [%llx,%llx): 0x%llx (first hit)\n", lo, hi,
               (unsigned long long)xemu.rip);
   }
+  if (pc_ring > 0) {
+    /* Keep the last `pc_ring` executed PCs; dump on exit. */
+    if (!pc_ring_buf) pc_ring_buf = calloc((size_t)pc_ring, sizeof(uint64_t));
+    if (pc_ring_buf) {
+      pc_ring_buf[pc_ring_pos % (size_t)pc_ring] = xemu.rip;
+      pc_ring_pos++;
+    }
+  }
+  if (pc_unique) {
+    /* Record the first visit to each function granule (64 bytes). */
+    uint64_t gran = xemu.rip & ~0x3full;
+    if (pc_seen_add(gran))            /* 1 = newly inserted */
+      fprintf(stderr, "PC 0x%llx\n", (unsigned long long)xemu.rip);
+  }
+  if (stop_at) {
+    unsigned long long addr = 0;
+    if (sscanf(stop_at, "%llx", &addr) == 1 && xemu.rip == addr) {
+      fprintf(stderr, "stop-at: reached 0x%llx after %lu instructions\n"
+              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx\n",
+              (unsigned long long)addr, steps,
+              (unsigned long long)xemu.gpr[0], (unsigned long long)xemu.gpr[1],
+              (unsigned long long)xemu.gpr[2], (unsigned long long)xemu.gpr[6],
+              (unsigned long long)xemu.gpr[7]);
+      return 1;
+    }
+  }
   ring_add(xemu.rip, inst.op, inst.len);
   rc = xemu_exec(&inst);
   if (rc != 0) {
@@ -138,6 +172,39 @@ static void monitor(void) {
   }
 }
 
+/* Scan guest RAM for a byte string; used to prove printk ran (the kernel's
+ * log buffer lives in .bss and is not at a fixed address without symbols). */
+/* Small open-addressing set of visited 64-byte PC granules. */
+static uint64_t *pc_seen_tab;
+static size_t pc_seen_cap;
+
+static int pc_seen_add(uint64_t v) {
+  if (!pc_seen_tab) {
+    pc_seen_cap = 1u << 22;                 /* 4M slots */
+    pc_seen_tab = calloc(pc_seen_cap, sizeof(uint64_t));
+    if (!pc_seen_tab) return 0;
+  }
+  size_t i = (size_t)((v * 0x9E3779B97F4A7C15ull) >> 40) & (pc_seen_cap - 1);
+  for (size_t probes = 0; probes < 64; probes++) {
+    if (pc_seen_tab[i] == 0) { pc_seen_tab[i] = v; return 1; }
+    if (pc_seen_tab[i] == v) return 0;
+    i = (i + 1) & (pc_seen_cap - 1);
+  }
+  return 0;
+}
+
+static void find_in_memory(const char *needle) {
+  size_t n = strlen(needle);
+  int hits = 0;
+  for (uint64_t a = 0; a + n <= XEMU_MEM_SIZE; a++) {
+    if (memcmp(&xemu_mem[a], needle, n) == 0) {
+      printf("found \"%s\" at 0x%llx\n", needle, (unsigned long long)a);
+      if (++hits >= 8) break;
+    }
+  }
+  if (!hits) printf("\"%s\" not found in RAM\n", needle);
+}
+
 static void dump_mem_and_exit(void) {
   if (!dump_mem) return;
   unsigned long long addr = 0, len = 0;
@@ -175,6 +242,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--trace-cr")) trace_cr = 1;
     else if (!strcmp(argv[i], "--trace-port")) xemu_trace_port = 1;
     else if (!strncmp(argv[i], "--watch-pc=", 11)) watch_pc = argv[i] + 11;
+    else if (!strncmp(argv[i], "--find-str=", 11)) find_str = argv[i] + 11;
+    else if (!strncmp(argv[i], "--stop-at=", 10)) stop_at = argv[i] + 10;
+    else if (!strcmp(argv[i], "--pc-unique")) pc_unique = 1;
+    else if (!strncmp(argv[i], "--pc-ring=", 10)) pc_ring = atoi(argv[i] + 10);
     else if (!strncmp(argv[i], "--dump-mem=", 11)) dump_mem = argv[i] + 11;
     else if (!strcmp(argv[i], "--kernel") && i + 1 < argc) kernel_path = argv[++i];
     else if (!strncmp(argv[i], "--cmdline=", 10)) cmdline = argv[i] + 10;
@@ -207,10 +278,24 @@ int main(int argc, char **argv) {
   } else {
     monitor();
   }
+  if (find_str) find_in_memory(find_str);
   dump_mem_and_exit();
-  if (xemu_port_out_count)
-    fprintf(stderr, "xemu: %llu port writes\n",
-            (unsigned long long)xemu_port_out_count);
+  if (pc_ring_buf && pc_ring_pos) {
+    size_t n = pc_ring_pos < (size_t)pc_ring ? pc_ring_pos : (size_t)pc_ring;
+    fprintf(stderr, "last %zu executed PCs:\n", n);
+    for (size_t i = 0; i < n; i++) {
+      size_t idx = (pc_ring_pos - n + i) % (size_t)pc_ring;
+      fprintf(stderr, "  #%zu 0x%llx\n", i, (unsigned long long)pc_ring_buf[idx]);
+    }
+  }
+  for (int i = 0; i < 32; i++)
+    if (xemu_exc_count[i])
+      fprintf(stderr, "xemu: exception %d raised %llu times\n", i,
+              (unsigned long long)xemu_exc_count[i]);
+  if (xemu_port_out_count || xemu_port_in_count)
+    fprintf(stderr, "xemu: %llu port writes, %llu port reads\n",
+            (unsigned long long)xemu_port_out_count,
+            (unsigned long long)xemu_port_in_count);
   printf("xemu: %s after %lu instructions, rip=0x%llx, exit=%llu\n",
          xemu.halted ? "halted" : "stopped", steps,
          (unsigned long long)xemu.rip, (unsigned long long)(xemu_exit_code & 0xff));

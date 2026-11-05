@@ -15,6 +15,15 @@
 #include <math.h>
 #include <string.h>
 
+static void wr32le(uint8_t *p, uint32_t v) {
+  for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i));
+}
+static uint32_t rd32le(const uint8_t *p) {
+  uint32_t v = 0;
+  for (int i = 0; i < 4; i++) v |= (uint32_t)p[i] << (8 * i);
+  return v;
+}
+
 typedef struct {
   long double st[8];
   uint16_t tag;        /* 1 = empty for ST(i), bit i */
@@ -137,8 +146,8 @@ static void store_m64(uint64_t addr, long double v) {
   xemu_vwrite(addr, &bits, 8);
 }
 
-static void store_m80(uint64_t addr, long double v) {
-  uint8_t raw[10] = {0};
+static void encode_m80(uint8_t *raw, long double v) {
+  memset(raw, 0, 10);
   int sign = signbit(v) ? 1 : 0;
   long double a = fabsl(v);
   int exp;
@@ -161,12 +170,69 @@ static void store_m80(uint64_t addr, long double v) {
   for (int i = 0; i < 8; i++) raw[i] = (uint8_t)(mant >> (8 * i));
   raw[8] = (uint8_t)se;
   raw[9] = (uint8_t)(se >> 8);
+}
+
+static void store_m80(uint64_t addr, long double v) {
+  uint8_t raw[10];
+  encode_m80(raw, v);
   xemu_vwrite(addr, raw, 10);
 }
 
 /* --- execution ------------------------------------------------------ */
 
 static uint8_t fpu_stub_env[108];
+
+/* --- FXSAVE / FXRSTOR ----------------------------------------------- */
+
+/* 512-byte save area. Only the fields the kernel relies on are meaningful:
+ * the control/status words, the tag word, and the MXCSR. The register stack
+ * itself is written from our `long double` array, narrowed to 80-bit. */
+static void encode_m80(uint8_t *raw, long double v);
+
+void xemu_fpu_fxsave(uint64_t addr) {
+  uint8_t area[512];
+  memset(area, 0, sizeof(area));
+  uint16_t cw = fpu.cw, sw = fpu.sw;
+  memcpy(area + 0, &cw, 2);
+  memcpy(area + 2, &sw, 2);
+  area[4] = (uint8_t)(fpu.tag & 0xff);        /* abridged tag word */
+  wr32le(area + 8, xemu.mxcsr);               /* MXCSR */
+  wr32le(area + 12, 0xffff);                  /* MXCSR mask */
+  for (int i = 0; i < 8; i++) encode_m80(area + 32 + i * 16, *st(i));
+  for (int i = 0; i < 16; i++) {
+    uint64_t lo = xemu.xmm[i][0], hi = xemu.xmm[i][1];
+    memcpy(area + 160 + i * 16, &lo, 8);
+    memcpy(area + 168 + i * 16, &hi, 8);
+  }
+  xemu_vwrite(addr, area, sizeof(area));
+}
+
+void xemu_fpu_fxrstor(uint64_t addr) {
+  uint8_t area[512];
+  if (xemu_vread(addr, area, sizeof(area)) != 0) return;
+  memcpy(&fpu.cw, area + 0, 2);
+  memcpy(&fpu.sw, area + 2, 2);
+  fpu.tag = area[4];
+  fpu.top = 0;
+  xemu.mxcsr = rd32le(area + 8);
+  for (int i = 0; i < 8; i++) {
+    uint8_t raw[10];
+    memcpy(raw, area + 32 + i * 16, 10);
+    uint64_t mant = 0;
+    for (int b = 0; b < 8; b++) mant |= (uint64_t)raw[b] << (8 * b);
+    uint16_t se = (uint16_t)(raw[8] | (raw[9] << 8));
+    int sign = (se >> 15) & 1, exp = se & 0x7fff;
+    long double v;
+    if (exp == 0 && mant == 0) v = 0.0L;
+    else if (exp == 0x7fff) v = (mant << 1) ? NAN : INFINITY;
+    else v = ldexpl((long double)mant, exp - 16383 - 63);
+    fpu.st[i] = sign ? -v : v;
+  }
+  for (int i = 0; i < 16; i++) {
+    memcpy(&xemu.xmm[i][0], area + 160 + i * 16, 8);
+    memcpy(&xemu.xmm[i][1], area + 168 + i * 16, 8);
+  }
+}
 
 int xemu_fpu_exec(const XemuInst *d) {
   uint64_t ea = 0;

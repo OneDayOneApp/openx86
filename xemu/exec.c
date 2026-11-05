@@ -282,6 +282,28 @@ int xemu_exec(const XemuInst *d) {
   int sz = d->opsz;
   uint16_t op = d->op;
   if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
+  if (op == Ops_FXSAVE) {
+    xemu_fpu_fxsave(xemu_ea(d));
+    xemu.rip += d->len;
+    xemu_after_inst();
+    return 0;
+  }
+  if (op == Ops_FXRSTOR) {
+    xemu_fpu_fxrstor(xemu_ea(d));
+    xemu.rip += d->len;
+    xemu_after_inst();
+    return 0;
+  }
+  if (op == Ops_LDMXCSR || op == Ops_STMXCSR ||
+      op == Ops_LFENCE || op == Ops_MFENCE || op == Ops_SFENCE ||
+      op == Ops_CLFLUSH || op == Ops_PREFETCH) {
+    if (op == Ops_LDMXCSR) xemu.mxcsr = (uint32_t)ld(xemu_ea(d), 4);
+    else if (op == Ops_STMXCSR) st(xemu_ea(d), xemu.mxcsr, 4);
+    /* fences and cache maintenance are no-ops in a single-threaded model */
+    xemu.rip += d->len;
+    xemu_after_inst();
+    return 0;
+  }
   if (op >= Ops_FNINIT && op <= Ops_FNOP) {
     if (xemu_fpu_exec(d) != 0) return -1;
     xemu.rip += d->len;
@@ -818,7 +840,27 @@ int xemu_exec(const XemuInst *d) {
       uint32_t leaf = (uint32_t)xemu.gpr[0];
       uint32_t a = 0, b = 0, c = 0, d = 0;
       if (leaf == 0) { a = 1; b = 0x2d363858; c = 0x65726f43; d = 0x2d484d4b; }
-      else if (leaf == 1) { a = 0x00000663; b = 0; c = 0x07008020; d = 0x07008970; }
+      else if (leaf == 1) {
+        /* Advertise exactly what XEMU implements: x87, SSE2, PAE, MSR, CX8,
+           CMOV, FXSAVE. No APIC/HTT (single CPU, no APIC), no SEP (SYSENTER
+           is not implemented), no XSAVE/AVX. */
+        a = 0x00000663;
+        b = 0;                                        /* brand index, CLFLUSH 8 */
+        c = (1u << 13);                               /* CMPXCHG16B */
+        d = (1u << 0) |                              /* FPU  */
+            (1u << 3) |                              /* PSE  */
+            (1u << 4) |                              /* TSC  */
+            (1u << 5) |                              /* MSR  */
+            (1u << 6) |                              /* PAE  */
+            (1u << 8) |                              /* CX8  */
+            (1u << 12) |                             /* MTRR */
+            (1u << 13) |                             /* PGE  */
+            (1u << 15) |                             /* CMOV */
+            (1u << 19) |                             /* CLFSH */
+            (1u << 24) |                             /* FXSR */
+            (1u << 25) |                             /* SSE  */
+            (1u << 26);                              /* SSE2 */
+      }
       else if (leaf == 0x80000000u) { a = 0x80000001; }
       else if (leaf == 0x80000001u) { c = 1; d = 0x20100800; }
       xemu.gpr[0] = a; xemu.gpr[3] = b; xemu.gpr[1] = c; xemu.gpr[2] = d;
