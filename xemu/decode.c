@@ -230,6 +230,8 @@ static void init_tables(void) {
   set(twobyte, 0x54, DI(Ops_SIMD_AND, .modrm = 1, .dir = 1, .sse_sel = 1));
   set(twobyte, 0x55, DI(Ops_SIMD_ANDN, .modrm = 1, .dir = 1, .sse_sel = 1));
   set(twobyte, 0x56, DI(Ops_SIMD_OR, .modrm = 1, .dir = 1, .sse_sel = 1));
+  set(twobyte, 0x34, DI(Ops_SYSENTER, .modrm = 0));
+  set(twobyte, 0x35, DI(Ops_SYSEXIT, .modrm = 0));
   set(twobyte, 0x57, DI(Ops_SIMD_XOR, .modrm = 1, .dir = 1, .sse_sel = 1));
   set(twobyte, 0x58, DI(Ops_SIMD_ADD, .modrm = 1, .dir = 1, .sse_sel = 1));
   set(twobyte, 0x59, DI(Ops_SIMD_MUL, .modrm = 1, .dir = 1, .sse_sel = 1));

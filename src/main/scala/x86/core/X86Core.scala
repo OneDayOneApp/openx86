@@ -588,19 +588,22 @@ class X86Core extends Module {
     sysTrapR := false.B
     sysStep := 0.U
     sysWait := false.B
+    // Vendor "OpenX86-Core" (docs/PRD.md 5.7): EBX/EDX/ECX = Open / X86- / Core.
+    // Every leaf below must match xemu/exec.c exactly (t29_cpuid locksteps it).
     cpuidEax := Mux(leaf === 0.U, 1.U,
       Mux(leaf === 1.U, "h00000663".U,
-        Mux(leaf === "h80000000".U, "h80000001".U, 0.U)))
-    cpuidEbx := Mux(leaf === 0.U, "h2d363858".U, 0.U)
-    // Must match xemu/exec.c: advertise only what is implemented.
-    // ECX: CMPXCHG16B. EDX: FPU PSE TSC MSR PAE CX8 MTRR PGE CMOV
-    //      CLFSH FXSR SSE SSE2 (no APIC, no SEP, no HTT).
+        Mux(leaf === "h80000000".U, "h80000008".U,
+          Mux(leaf === "h80000008".U, "h00003028".U, 0.U))))
+    cpuidEbx := Mux(leaf === 0.U, "h6e65704f".U, 0.U)
+    // ECX: CMPXCHG16B; 80000001: LAHF_LM.
+    // EDX leaf 1: FPU TSC MSR PAE CX8 SEP CMOV CLFSH FXSR SSE SSE2
+    // (no APIC, no MMX, no HTT).  80000001: SYSCALL NX RDTSCP LM.
     cpuidEcx := Mux(leaf === 0.U, "h65726f43".U,
       Mux(leaf === 1.U, "h00002000".U,
         Mux(leaf === "h80000001".U, 1.U, 0.U)))
-    cpuidEdx := Mux(leaf === 0.U, "h2d484d4b".U,
-      Mux(leaf === 1.U, "h0708b179".U,
-        Mux(leaf === "h80000001".U, "h20100800".U, 0.U)))
+    cpuidEdx := Mux(leaf === 0.U, "h2d363858".U,
+      Mux(leaf === 1.U, "h07088971".U,
+        Mux(leaf === "h80000001".U, "h28100800".U, 0.U)))
     idEx.valid := false.B
     ibufValid := false.B
   }

@@ -1,3 +1,29 @@
+## Unreleased — CPUID 按 PRD 对齐：vendor `OpenX86-Core`
+
+`/proc/cpuinfo` 之前显示 `vendor_id : X86-KMH-Core`，与产品规范
+`docs/PRD.md §5.7` 规定的 `OpenX86-Core` 不一致。
+
+- **CPUID.0**：EAX=1，EBX/EDX/ECX = `Open` / `X86-` / `Core`。
+  RTL（`src/main/scala/x86/core/X86Core.scala`）同步改成同一字符串，
+  `t29_cpuid` 的断言随之更新，系统逐指令对拍重新通过。
+- **CPUID.1**：EDX = TSC MSR PAE CX8 SEP CMOV CLFSH FXSR SSE SSE2。
+  为了能"如实声明 SEP"，顺带**实现了 `SYSENTER`/`SYSEXIT`**
+  （`0F 34`/`0F 35` + MSR `0x174/0x175/0x176`，含 `CR4.SEP` 的 #UD 检查）。
+- **CPUID.80000000h** = 0x80000008；**80000001h** EDX = SYSCALL NX RDTSCP LM、
+  ECX.LAHF_LM=1；**80000008h** = 物理 40 位 / 线性 48 位（`XEMU_MAXPHYADDR`
+  同步改为 40，驱动保留位检查）。
+- 唯一有意保留的偏离：PRD 表格写 "FPU/MMX 置 0"，但 Linux 在
+  `CPUID.1:EDX.FPU=0` 时直接 `x86/fpu: Giving up, no FPU found` panic，
+  而 XEMU 确实实现了 x87/FXSAVE 子集，因此 **FPU 置 1、MMX 置 0**，并在
+  代码与测试里注明原因。
+
+新增系统测试：
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `t78_cpuid`（0x78） | vendor 字符串、leaf 1 / 80000000h / 80000001h / 80000008h 逐位校验 |
+| `t79_sysenter`（0x79） | SYSENTER→CPL0（CS/SS/RSP/IF）、SYSEXIT→CPL3（RCX/RDX）往返 |
+
 ## Unreleased — fork/COW、SSE 逻辑运算、串口输入不再阻塞
 
 ### 修复

@@ -8,11 +8,11 @@ _start:
     cpuid
     cmpl $1, %eax
     jne fail
-    cmpl $0x2d363858, %ebx
+    cmpl $0x6e65704f, %ebx             # "Open"
     jne fail
-    cmpl $0x65726f43, %ecx
+    cmpl $0x65726f43, %ecx             # "Core"
     jne fail
-    cmpl $0x2d484d4b, %edx
+    cmpl $0x2d363858, %edx             # "X86-"
     jne fail
 
     movl $1, %eax
@@ -22,6 +22,11 @@ _start:
     jne fail
     andl $0x04000000, %edx
     cmpl $0x04000000, %edx
+    jne fail
+
+    movl $0x80000008, %eax
+    cpuid
+    cmpl $0x00003028, %eax
     jne fail
 
     movl $0x80000001, %eax

@@ -45,6 +45,10 @@ CASES = [
     # L3: an indirect JMP whose memory operand faults must leave the #PF
     # handler RIP intact (the load's 0 must not be written to RIP).
     ("t77_jmp_fault", 0x77),
+    # CPUID must match docs/PRD.md 5.7 (vendor "OpenX86-Core" + feature bits).
+    ("t78_cpuid", 0x78),
+    # SYSENTER/SYSEXIT must work, since leaf 1 advertises SEP.
+    ("t79_sysenter", 0x79),
 ]
 
 

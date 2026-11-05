@@ -32,7 +32,7 @@ reboot: System halted
 | `make xemu-decode-test`（长度+字段） | 693/693 + 693/693 |
 | `make emu-test`（DUT vs XEMU 逐指令） | 37/37 |
 | `make sys-lockstep-test`（系统逐指令） | 10/10 |
-| `make xemu-dev-test`（XEMU 专属系统/设备测试） | 17/17 |
+| `make xemu-dev-test`（XEMU 专属系统/设备测试） | 19/19 |
 | `make xemu-shell-test`（T5：交互式 busybox shell，含 applet 管道） | ✅ PASS |
 
 ```bash

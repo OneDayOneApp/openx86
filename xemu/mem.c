@@ -202,8 +202,8 @@ static void tlb_set_dirty(TlbEnt *e) {
  * bit 57 and _PAGE_SAVED_DIRTY in bit 58, and treating those as reserved made
  * every write-protected user PTE (fork/COW) die in page_fault_oops with
  * "Corrupted page table".  Only the physical-address bits above MAXPHYADDR
- * are genuinely reserved; XEMU reports MAXPHYADDR = 36 via CPUID.80000008h. */
-#define XEMU_MAXPHYADDR 36
+ * are genuinely reserved; XEMU reports MAXPHYADDR = 40 via CPUID.80000008h. */
+#define XEMU_MAXPHYADDR 40
 #define PTE_RSVD_MASK (((1ull << 52) - 1) & ~((1ull << XEMU_MAXPHYADDR) - 1))
 
 static int page_fault(uint64_t va, uint64_t err, uint64_t *errcode) {

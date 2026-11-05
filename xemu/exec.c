@@ -1068,35 +1068,46 @@ int xemu_exec(const XemuInst *d) {
     case Ops_CPUID: {
       uint32_t leaf = (uint32_t)xemu.gpr[0];
       uint32_t a = 0, b = 0, c = 0, d = 0;
-      if (leaf == 0) { a = 1; b = 0x2d363858; c = 0x65726f43; d = 0x2d484d4b; }
+      /* Leaf 0: the product vendor string from docs/PRD.md 5.7. It is
+         "OpenX86-Core" (12 bytes), returned as EBX/EDX/ECX. */
+      if (leaf == 0) { a = 1; b = 0x6e65704f; c = 0x65726f43; d = 0x2d363858; }
       else if (leaf == 1) {
-        /* Advertise exactly what XEMU implements: x87, SSE2, PAE, MSR, CX8,
-           CMOV, FXSAVE. No APIC/HTT (single CPU, no APIC), no SEP (SYSENTER
-           is not implemented), no XSAVE/AVX. */
-        a = 0x00000663;
+        /* docs/PRD.md 5.7: EDX = TSC, MSR, PAE, CX8, SEP, CMOV, SSE, SSE2,
+           FXSR, CLFSH, with MMX = 0 and no APIC/HTT (single CPU, no APIC).
+           FPU is deliberately *set* although the PRD table says 0: Linux
+           panics with "Giving up, no FPU found" when CPUID.1:EDX.FPU is
+           clear, and XEMU does implement the x87 subset (FXSAVE/FXRSTOR plus
+           the arithmetic busybox and the kernel need), so claiming it is the
+           honest choice. SEP is advertised because SYSENTER/SYSEXIT are
+           implemented (see Ops_SYSENTER below); RDTSCP/LAHF_LM likewise. */
+        a = 0x00000663;                               /* family 6, model 6, step 3 */
         b = 0;                                        /* brand index, CLFLUSH 8 */
         c = (1u << 13);                               /* CMPXCHG16B */
-        d = (1u << 0) |                              /* FPU  */
-            (1u << 3) |                              /* PSE  */
-            (1u << 4) |                              /* TSC  */
-            (1u << 5) |                              /* MSR  */
-            (1u << 6) |                              /* PAE  */
-            (1u << 8) |                              /* CX8  */
-            (1u << 12) |                             /* MTRR */
-            (1u << 13) |                             /* PGE  */
-            (1u << 15) |                             /* CMOV */
-            (1u << 19) |                             /* CLFSH */
-            (1u << 24) |                             /* FXSR */
-            (1u << 25) |                             /* SSE  */
-            (1u << 26);                              /* SSE2 */
+        d = (1u << 0) |                               /* FPU   (see above) */
+            (1u << 4) |                               /* TSC   */
+            (1u << 5) |                               /* MSR   */
+            (1u << 6) |                               /* PAE   */
+            (1u << 8) |                               /* CX8   */
+            (1u << 11) |                              /* SEP   */
+            (1u << 15) |                              /* CMOV  */
+            (1u << 19) |                              /* CLFSH */
+            (1u << 24) |                              /* FXSR  */
+            (1u << 25) |                              /* SSE   */
+            (1u << 26);                               /* SSE2  */
       }
       else if (leaf == 0x80000000u) { a = 0x80000008; }
       else if (leaf == 0x80000008u) {
-        /* 48-bit virtual, 36-bit physical addresses (matches the pager's
-           MAXPHYADDR and the 512 MiB memory model). */
-        a = (48u << 8) | 36u;
+        /* 48-bit virtual, 40-bit physical addresses (matches XEMU_MAXPHYADDR
+           in mem.c, which drives the reserved-bit checks). */
+        a = (48u << 8) | 40u;
       }
-      else if (leaf == 0x80000001u) { c = 1; d = 0x20100800; }
+      else if (leaf == 0x80000001u) {
+        c = 1;                                        /* LAHF_LM */
+        d = (1u << 11) |                              /* SYSCALL */
+            (1u << 20) |                              /* NX      */
+            (1u << 27) |                              /* RDTSCP  */
+            (1u << 29);                               /* LM      */
+      }
       xemu.gpr[0] = a; xemu.gpr[3] = b; xemu.gpr[1] = c; xemu.gpr[2] = d;
       break;
     }
@@ -1112,6 +1123,9 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000100: xemu.fs_base = v; break;
         case 0xc0000101: xemu.gs_base = v; break;
         case 0xc0000102: xemu.kernel_gs_base = v; break;
+        case 0x00000174: xemu.sysenter_cs = v & 0xffff; break;
+        case 0x00000175: xemu.sysenter_esp = v; break;
+        case 0x00000176: xemu.sysenter_eip = v; break;
         default: break;
       }
       break;
@@ -1127,6 +1141,9 @@ int xemu_exec(const XemuInst *d) {
         case 0xc0000100: v = xemu.fs_base; break;
         case 0xc0000101: v = xemu.gs_base; break;
         case 0xc0000102: v = xemu.kernel_gs_base; break;
+        case 0x00000174: v = xemu.sysenter_cs; break;
+        case 0x00000175: v = xemu.sysenter_esp; break;
+        case 0x00000176: v = xemu.sysenter_eip; break;
         case 0x00000010: v = xemu.tsc; break;      /* IA32_TSC */
         case 0x0000001b: v = 0; break;             /* IA32_APIC_BASE: no APIC */
         default: break;
@@ -1134,6 +1151,41 @@ int xemu_exec(const XemuInst *d) {
       xemu.gpr[0] = v & 0xffffffffu;
       xemu.gpr[2] = v >> 32;
       break;
+    }
+    case Ops_SYSENTER: {
+      /* Intel SDM SYSENTER: CS = IA32_SYSENTER_CS, SS = CS+8, CPL 0,
+         RIP = IA32_SYSENTER_EIP, RSP = IA32_SYSENTER_ESP, IF = 0. Segment
+         bases are 0 (XEMU models flat segments only). */
+      uint32_t cs = (uint32_t)(xemu.sysenter_cs & 0xffff);
+      if (!(xemu.cr4 & 0x800)) {              /* CR4.SEP */
+        xemu_raise_exc(6, 0, xemu.rip);       /* #UD */
+        return 0;
+      }
+      if (!cs) return -1;                     /* #GP(0) unmodelled */
+      xemu.cs = cs;
+      xemu.ss = cs + 8;
+      xemu.cpl = 0;
+      xemu.rip = xemu.sysenter_eip;
+      xemu.gpr[4] = xemu.sysenter_esp;
+      xemu.rflags &= ~((1ull << 9) | (1ull << 8) | (1ull << 17)); /* IF,TF,VM */
+      return 0;
+    }
+    case Ops_SYSEXIT: {
+      /* Intel SDM SYSEXIT (64-bit): CS = IA32_SYSENTER_CS+16, SS = CS+8,
+         CPL 3, RIP = RDX, RSP = RCX. */
+      uint32_t cs = (uint32_t)(xemu.sysenter_cs & 0xffff);
+      if (!(xemu.cr4 & 0x800)) {              /* CR4.SEP */
+        xemu_raise_exc(6, 0, xemu.rip);
+        return 0;
+      }
+      if (!cs || xemu.cpl != 0) return -1;    /* #GP(0) unmodelled */
+      cs += 16;
+      xemu.cs = cs | 3;
+      xemu.ss = (cs + 8) | 3;
+      xemu.cpl = 3;
+      xemu.rip = xemu.gpr[2];                 /* RDX */
+      xemu.gpr[4] = xemu.gpr[1];              /* RCX */
+      return 0;
     }
     case Ops_SYSCALL:
       xemu_do_syscall(xemu.rip + d->len);

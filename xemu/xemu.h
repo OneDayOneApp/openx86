@@ -41,6 +41,7 @@ typedef struct {
   uint16_t idtr_limit;
   uint64_t cs, ss, ds, es, fs, gs;
   uint64_t efer, star, lstar, sfmask;
+  uint64_t sysenter_cs, sysenter_esp, sysenter_eip;
   uint64_t fs_base, gs_base, kernel_gs_base;
   uint32_t mxcsr;
   uint64_t dr[8];   /* debug registers */
