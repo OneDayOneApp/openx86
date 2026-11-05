@@ -94,14 +94,32 @@ static uint64_t ld(uint64_t addr, int sz) {
     }
     return 0;
   }
-  uint64_t v = 0;
-  for (int i = 0; i < sz; i++) v |= (uint64_t)b[i] << (8 * i);
-  return v;
+  /* Little-endian host and guest: the byte buffer is already the value.
+     A switch keeps the common sizes branch-free without calling memcpy. */
+  switch (sz) {
+    case 1: return b[0];
+    case 2: { uint16_t v; memcpy(&v, b, 2); return v; }
+    case 4: { uint32_t v; memcpy(&v, b, 4); return v; }
+    case 8: { uint64_t v; memcpy(&v, b, 8); return v; }
+    default: {
+      uint64_t v = 0;
+      for (int i = 0; i < sz; i++) v |= (uint64_t)b[i] << (8 * i);
+      return v;
+    }
+  }
 }
 
 static void st(uint64_t addr, uint64_t v, int sz) {
   uint8_t b[8];
-  for (int i = 0; i < sz; i++) b[i] = (uint8_t)(v >> (8 * i));
+  switch (sz) {
+    case 1: b[0] = (uint8_t)v; break;
+    case 2: { uint16_t w = (uint16_t)v; memcpy(b, &w, 2); break; }
+    case 4: { uint32_t w = (uint32_t)v; memcpy(b, &w, 4); break; }
+    case 8: memcpy(b, &v, 8); break;
+    default:
+      for (int i = 0; i < sz; i++) b[i] = (uint8_t)(v >> (8 * i));
+      break;
+  }
   if (xemu_vwrite(addr, b, sz) != 0) {
     if (!xemu_fault_pending) {
       xemu.gpr[4] = inst_entry_rsp;   /* roll the stack back before the frame */

@@ -134,6 +134,15 @@ int xemu_pit_in(uint32_t off, int size, uint64_t *val);
 int xemu_pit_out(uint32_t off, int size, uint64_t val);
 void xemu_pit_tick(void);
 extern uint64_t xemu_pit_ips;
+
+/* Decode-cache invalidation.  xemu_code_gen is bumped whenever guest code
+ * may have changed (a store into a page that once held decoded code, a CR3
+ * load, INVLPG); decode.c caches one XemuInst per PC and rejects an entry
+ * whose generation is stale.  xemu_code_page_mark() records that a page has
+ * held code, so ordinary data stores keep costing only one bit test. */
+extern uint64_t xemu_code_gen;
+void xemu_code_page_mark(uint64_t pa);
+int xemu_xlate_fetch(uint64_t va, uint64_t *pa, uint64_t *errcode);
 int xemu_pic_ack(void);
 void xemu_after_inst(void);
 /* x87 */

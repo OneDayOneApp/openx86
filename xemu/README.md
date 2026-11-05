@@ -27,13 +27,14 @@ reboot: System halted
 
 | 门禁 | 结果 |
 | --- | --- |
-| `make xemu-linux-test`（T4，真实内核→用户态） | ✅ 30M 指令 / 4.3 s / ~7 MIPS |
+| `make xemu-linux-test`（T4，真实内核→用户态） | ✅ 30M 指令 / 2.2 s / ~14 MIPS（持续 ~22 MIPS） |
 | `make isa-diff`（Unicorn 逐指令） | 18600/18600 |
 | `make xemu-decode-test`（长度+字段） | 693/693 + 693/693 |
 | `make emu-test`（DUT vs XEMU 逐指令） | 37/37 |
 | `make sys-lockstep-test`（系统逐指令） | 10/10 |
 | `make xemu-dev-test`（XEMU 专属系统/设备测试） | 19/19 |
 | `make xemu-shell-test`（T5：交互式 busybox shell，含 applet 管道） | ✅ PASS |
+| `make xemu-soak-test`（L4：10 分钟无 hang） | ✅ 72 条命令全部响应 |
 
 ```bash
 make xemu-linux-runner          # build/xemu-linux（512 MiB RAM）

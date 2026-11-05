@@ -115,12 +115,15 @@ def main():
                     help="instruction cap; the emulator defaults to 100M, "
                          "which a soak must not inherit")
     ap.add_argument("--xemu", default=XEMU)
+    ap.add_argument("--kernel", default=KERNEL)
+    ap.add_argument("--initrd", default=INITRD)
     args = ap.parse_args()
 
     # The parser only accepts the `--flag=value` form for these options.
     # --kernel/--initrd take a separate argument; --cmdline uses the = form.
-    argv = [args.xemu, "--kernel", KERNEL, "--cmdline=console=ttyS0",
-            "--initrd", INITRD, "-b"]
+    # Honour --initrd so `make xemu-soak-test` can pass the shell image through.
+    argv = [args.xemu, "--kernel", args.kernel, "--cmdline=console=ttyS0",
+            "--initrd", args.initrd, "-b"]
     argv.append("--max-steps=%d" % args.max_steps)
 
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
@@ -128,7 +131,7 @@ def main():
     t0 = time.time()
     failures = []
 
-    print("soak: booting %s" % os.path.basename(INITRD), flush=True)
+    print("soak: booting %s" % os.path.basename(args.initrd), flush=True)
     got = con.wait_for(BANNER.decode(), args.boot_timeout)
     if got is None:
         failures.append("boot: banner never appeared")

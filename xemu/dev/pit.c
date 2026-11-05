@@ -107,11 +107,17 @@ int xemu_pit_out(uint32_t off, int size, uint64_t val) {
 /* Advance the timer by one instruction. The interpreter runs roughly
  * `XEMU_PIT_IPS` instructions per emulated second (default 1 MIPS), so the
  * 1.193182 MHz input clock is divided down accordingly. */
+/* Called once per instruction, so the common path (channel 0 idle, or still
+ * counting down with nothing to do) must be a couple of integer ops.  The PIT
+ * clock (1.193182 MHz) is one to two orders of magnitude slower than the
+ * instruction rate, so the divide only runs when a tick can actually occur. */
 void xemu_pit_tick(void) {
   ticks++;
-  if (ch[0].reload == 0) return;
+  if (ch[0].reload == 0 || ch[0].counter == 0) return;
   uint64_t ips = xemu_pit_ips ? xemu_pit_ips : 1000000ull;
   div_accum += PIT_HZ;
+  /* Fast exit: not enough accumulated clock to reach the next whole tick. */
+  if (div_accum < ips) return;
   while (div_accum >= ips) {
     div_accum -= ips;
     if (ch[0].counter) ch[0].counter--;

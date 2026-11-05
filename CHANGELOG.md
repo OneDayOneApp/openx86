@@ -1,3 +1,42 @@
+## Unreleased — L4 完成：PCI 桩、诊断工具链、性能 ≥20 MIPS
+
+### L4 收尾
+
+- **PCI 配置空间桩**（`xemu/dev/pci.c`）：0xCF8/0xCFC mechanism #1，
+  字节/字/双字与未对齐访问、缺设备读全 1、最小 440FX host bridge
+  （bus0/dev0/fn0，只读 ID 寄存器忽略写入）。测试 `t85_pci`。
+- **诊断工具链**：`tools/xemu_itrace.py` 提供 NEMU 风格的
+  `itrace`/`ftrace`/`hot-pc`/`stats`，配合 `--trace-pc`、新增的 `--trace-bb`
+  与 `--trace-ring`，用 `vmlinux` 符号还原调用树与热点函数。
+- **稳定性门禁**：`make xemu-soak-test`（`tools/linux/soak_test.py`）连续
+  10 分钟、每 8 秒敲一条命令（`echo`/`ls`/`cat /proc/*`/`date`/`pidof`），
+  任何一条超时无响应或内核报 BUG/oops 即失败。实测 **10.4 分钟 / 72 条命令
+  全部通过**。
+- 新增 MSR：`IA32_PAT`（复位值 `0x0007040600070406`）、`IA32_MTRR_DEF_TYPE`、
+  `IA32_DEBUGCTL`；MTRRCAP 与 MTRRphysBase/Mask 读 0（CPUID 未声明 MTRR）。
+
+### 性能：7.75 → 22 MIPS（2.8 倍）
+
+采样定位到 `xemu_decode()` 占启动过程 **69%** 的运行时间——内核反复执行同
+几千条指令，而每次解码工作完全相同。三项改动：
+
+1. **解码缓存**（`xemu/decode.c`）：以 PC 为键的直接映射表，命中即拷贝
+   `XemuInst`。正确性靠 `xemu_code_gen`：写入"曾经存放过代码"的物理页、
+   CR3 装载、INVLPG 都会递增该代号，使旧条目失效。代码页用位图标记，
+   普通数据写入只多一次位测试。
+2. **访存快路径**（`xemu/mem.c`）：单页内 ≤8 字节的访问直接走内联翻译，
+   跳过循环、分页搬运与设备分发；权限判定复用 `tlb_allows()`/`tlb_set_dirty()`
+   本身，**不复制规则**（第一版复制了一份并在 CR0.WP 与 A/D 上出错，
+   被 `t71`/`t72` 当场抓住）。
+3. **每指令设备钩子短路**（`xemu/dev/pit.c`、`pic.c`）：PIT 在累计时钟不足
+   一个 tick 时直接返回；PIC 在 IRR∧¬IMR 为空时直接返回 -1。两者都是
+   "每指令调用一次"的函数，空路径必须是几个整数操作。
+
+`LD`/`ST` 的值拼装也改成按宽度分支，省掉逐字节移位循环（A/B 测得约 4%）。
+
+实测（30M / 100M 指令，CPU 时间）：**3.87 s → 2.07 s / 4.54 s ⇒ ~22 MIPS**，
+达到计划 L4 的 ≥20 MIPS 目标。
+
 ## Unreleased — CPUID 按 PRD 对齐：vendor `OpenX86-Core`
 
 `/proc/cpuinfo` 之前显示 `vendor_id : X86-KMH-Core`，与产品规范

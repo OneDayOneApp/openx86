@@ -114,6 +114,9 @@ void xemu_pic_raise(int irq) {
  * Returns -1 when nothing is deliverable. */
 int xemu_pic_ack(void) {
   static const int prio[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+  /* Called once per instruction while IF=1; nothing pending is the norm. */
+  if (((pic[0].irr & ~pic[0].imr) | (pic[1].irr & ~pic[1].imr)) == 0)
+    return -1;
   for (int i = 0; i < 8; i++) {
     int bit = prio[i];
     if (!(pic[0].irr & (1u << bit))) continue;

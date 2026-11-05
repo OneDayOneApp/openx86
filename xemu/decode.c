@@ -560,11 +560,39 @@ static DInfo x87_group(int esc, int reg, int mod, int rm) {
 }
 
 
+/* ------------------------------------------------------------ decode cache
+ *
+ * A profile of a Linux boot puts ~69% of the run time inside xemu_decode():
+ * the kernel re-executes the same few thousand instructions over and over
+ * while the decode work (prefix scan, table lookup, ModRM/SIB) is identical
+ * every time.  A direct-mapped cache keyed by PC turns that into a compare
+ * plus a struct copy.
+ *
+ * Correctness rests on xemu_code_gen (mem.c): every store into a page that
+ * has ever held decoded code bumps it, as does a CR3 load or INVLPG (both can
+ * remap a PC to different bytes).  A cache hit therefore also proves that the
+ * instruction bytes behind this PC have not changed since it was decoded.
+ *
+ * The decode tests and the ISA diff write their vectors through
+ * xemu_mem_write(), so they invalidate the cache exactly like guest code. */
+#define DEC_CACHE_SIZE 4096
+typedef struct {
+  uint64_t rip;
+  uint64_t gen;
+  XemuInst inst;
+} DecCacheEnt;
+static DecCacheEnt dec_cache[DEC_CACHE_SIZE];
+
 int xemu_decode(uint64_t rip, XemuInst *out) {
   init_tables();
+  DecCacheEnt *ce = &dec_cache[(rip >> 1) & (DEC_CACHE_SIZE - 1)];
+  if (ce->gen == xemu_code_gen && ce->rip == rip) {
+    *out = ce->inst;
+    return 0;
+  }
   uint8_t buf[16];
   uint64_t pa, ferr;
-  if (xemu_translate(rip, 0, 1, &pa, &ferr) != 0) {
+  if (xemu_xlate_fetch(rip, &pa, &ferr) != 0) {
     xemu_raise_exc(14, ferr, rip);
     return 1; /* fetched exception */
   }
@@ -1145,5 +1173,10 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
                  (op == Ops_MOVSXD && !rexW) ||
                  (op == Ops_MOV_CR && !rm_is_reg) ||
                  (op == Ops_IRET && !rexW) || bad_sse;
+  ce->rip = rip;
+  ce->gen = xemu_code_gen;
+  ce->inst = *out;
+  /* Remember that this page holds code, so a later store to it invalidates. */
+  xemu_code_page_mark(pa);
   return 0;
 }

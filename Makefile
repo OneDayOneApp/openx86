@@ -162,6 +162,9 @@ emu-fuzz: emu
 
 # ---------------------------------------------------------------- XEMU (self-written reference model)
 XEMU_SO := build/ref/libxemu.so
+# The decode cache is the big win (~1.7x); -O3/LTO measured within noise of -O2
+# on this interpreter, so keep the default at -O2 for fast builds.
+XEMU_OPT ?= -O2
 XEMU_MEM_MB ?= 16
 XEMU_DEFS := -DXEMU_MEM_SIZE_MB=$(XEMU_MEM_MB)
 
@@ -173,12 +176,12 @@ xemu-so: $(XEMU_SO)
 
 $(XEMU_SO): $(XEMU_SRC) xemu/xemu.h xemu/ops.h ref/difftest_abi.h
 	@mkdir -p build/ref
-	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -fPIC -shared $(XEMU_DEFS) \
+	/usr/bin/clang -isysroot $(SDK) -std=c11 $(XEMU_OPT) -fPIC -shared $(XEMU_DEFS) \
 	  -Wall -Wextra -o $@ $(XEMU_SRC) -lm
 
 build/xemu: $(XEMU_SRC) xemu/main.c xemu/xemu.h xemu/ops.h
 	@mkdir -p build
-	/usr/bin/clang -isysroot $(SDK) -std=c11 -O2 -Wall -Wextra $(XEMU_DEFS) \
+	/usr/bin/clang -isysroot $(SDK) -std=c11 $(XEMU_OPT) -Wall -Wextra $(XEMU_DEFS) \
 	  $(XEMU_SRC) xemu/main.c -o $@ -lm
 
 xemu-bin: build/xemu
@@ -269,3 +272,11 @@ $(INITRAMFS_SHELL): tools/linux/mkinitramfs.py $(BUSYBOX)
 .PHONY: xemu-shell-test
 xemu-shell-test: build/xemu-linux $(INITRAMFS_SHELL)
 	python3 tools/linux/shell_test.py --xemu build/xemu-linux --initrd $(INITRAMFS_SHELL)
+
+# L4 acceptance: the shell must stay responsive for MINUTES (default 10) with
+# no hang and no kernel complaint.  This is the plan's "连续运行 10 分钟无 hang".
+MINUTES ?= 10
+.PHONY: xemu-soak-test
+xemu-soak-test: build/xemu-linux $(INITRAMFS_SHELL)
+	python3 tools/linux/soak_test.py --xemu build/xemu-linux \
+	  --initrd $(INITRAMFS_SHELL) --minutes $(MINUTES) --interval 8
