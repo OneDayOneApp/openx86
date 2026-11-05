@@ -58,12 +58,70 @@ int xemu_mem_write(uint64_t addr, const void *buf, size_t n) {
   return -1;
 }
 
+/* ---------------------------------------------------------------- TLB
+ *
+ * The kernel zeroes early_top_pgt while still running on it, relying on the
+ * TLB to keep the old translations alive. Without a TLB every access would
+ * fault immediately. A small direct-mapped cache reproduces that behaviour.
+ * Entries are flushed on CR3 writes and INVLPG.
+ */
+#define TLB_BITS 10
+#define TLB_SIZE (1u << TLB_BITS)
+
+typedef struct {
+  uint64_t va;      /* page-aligned virtual address, 0 = empty */
+  uint64_t pa;      /* page-aligned physical address */
+  uint8_t  present;
+  uint8_t  write;
+  uint8_t  fetch;
+} TlbEnt;
+
+static TlbEnt tlb[TLB_SIZE];
+uint64_t tlb_hits, tlb_misses;
+static uint64_t tlb_cr3 = ~0ull;
+
+void xemu_tlb_flush(void) {
+  memset(tlb, 0, sizeof(tlb));
+}
+
+static void tlb_check_cr3(void) {
+  if (tlb_cr3 != xemu.cr3) { xemu_tlb_flush(); tlb_cr3 = xemu.cr3; }
+}
+
+void xemu_tlb_invlpg(uint64_t va) {
+  va &= ~0xfffull;
+  for (unsigned i = 0; i < TLB_SIZE; i++)
+    if (tlb[i].present && tlb[i].va == va) tlb[i].present = 0;
+}
+
+/* Cache a successful translation. */
+static void tlb_fill(uint64_t va, uint64_t pa) {
+  unsigned i = (unsigned)((va >> 12) & (TLB_SIZE - 1));
+  tlb[i].va = va & ~0xfffull;
+  tlb[i].pa = pa & ~0xfffull;
+  tlb[i].present = 1;
+}
+
+static int tlb_lookup(uint64_t va, uint64_t *pa) {
+  unsigned i = (unsigned)((va >> 12) & (TLB_SIZE - 1));
+  if (tlb[i].present && tlb[i].va == (va & ~0xfffull)) {
+    *pa = tlb[i].pa | (va & 0xfffull);
+    tlb_hits++;
+    return 0;
+  }
+  tlb_misses++;
+  return -1;
+}
+
 /* ---------------------------------------------------------------- paging */
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode) {
   uint64_t err = 0;
   if (write) err |= 2;
   if (fetch) err |= 16;
   if (!(xemu.cr0 & 0x80000000ull)) { *pa = va; *errcode = 0; return 0; }
+
+  tlb_check_cr3();
+  if (tlb_lookup(va, pa) == 0) { *errcode = 0; return 0; }
 
   uint64_t table = xemu.cr3 & ~0xfffull;
   for (int level = 0; level < 4; level++) {
@@ -75,14 +133,17 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
     if (fetch && (e & (1ull << 63)) && (xemu.efer & 0x800)) { *errcode = err | 1; return -1; }
     if (level == 1 && (e & 0x80)) { /* 1 GiB */
       *pa = (e & 0xfffffc0000000ull) + (va & 0x3fffffffull);
+      tlb_fill(va, *pa);
       *errcode = 0; return 0;
     }
     if (level == 2 && (e & 0x80)) { /* 2 MiB */
       *pa = (e & 0xfffffffe00000ull) + (va & 0x1fffffull);
+      tlb_fill(va, *pa);
       *errcode = 0; return 0;
     }
     if (level == 3) {
       *pa = (e & ~0xfffull) + (va & 0xfffull);
+      tlb_fill(va, *pa);
       *errcode = 0; return 0;
     }
     table = e & ~0xfffull;
@@ -92,6 +153,8 @@ int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *er
 }
 
 uint64_t xemu_fault_err = 0;
+uint64_t xemu_cr2_at_fault = 0;
+uint64_t xemu_fault_pc = 0;
 uint64_t xemu_exit_code = 0;
 int xemu_fault_pending = 0;
 
@@ -100,8 +163,13 @@ static int vaccess(uint64_t va, void *buf, size_t n, int write, int fetch) {
   while (n) {
     uint64_t pa, err;
     if (xemu_translate(va, write, fetch, &pa, &err) != 0) {
-      if (write || fetch) xemu.cr2 = va;
+      /* CR2 holds the faulting linear address for every #PF, read included.
+       * The kernel's early boot #PF handler reads CR2 to build the missing
+       * direct-map entry on demand, so a stale value breaks boot. */
+      xemu.cr2 = va;
       xemu_fault_err = err;
+      xemu_cr2_at_fault = va;
+      xemu_fault_pc = xemu.rip;
       return -1;
     }
     size_t chunk = 0x1000 - (va & 0xfff);
@@ -160,6 +228,7 @@ int xemu_gdt_read(uint64_t sel, uint64_t *base, uint64_t *limit, uint32_t *acces
 uint64_t xemu_exc_count[32];
 uint64_t xemu_exc_pc[32];
 uint64_t xemu_exc_err[32];
+int xemu_exc_delivered = 0;
 
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   if (vec < 32) { xemu_exc_count[vec]++; xemu_exc_pc[vec] = pc; xemu_exc_err[vec] = err; }
@@ -233,6 +302,9 @@ void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc) {
   xemu.cpl = to_cpl;
   if (is_interrupt_gate) xemu.rflags = old_flags & ~(1ull << 9);
   xemu.rip = handler;
+  /* Tell the instruction loop that RIP already points at the handler;
+   * it must not add the instruction length on top. */
+  xemu_exc_delivered = 1;
 }
 
 int xemu_request_irq(uint64_t vec) {

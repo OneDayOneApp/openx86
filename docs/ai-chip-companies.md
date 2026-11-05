@@ -29,7 +29,7 @@ AI 芯片不是单一品类，至少包括：
 
 | 类别 | 说明 | 代表 |
 | --- | --- | --- |
-| **GPU / GPGPU** | 通用并行处理器，训练/推理 | NVIDIA、AMD、Intel、Moore Threads、Biren、MetaX、Iluvatar、Tianshu |
+| **GPU / GPGPU** | 通用并行处理器，训练/推理 | NVIDIA、AMD、Intel、Moore Threads、Biren、MetaX、Iluvatar |
 | **TPU / AI ASIC** | 为特定 AI 负载定制的加速器 | Google TPU、AWS Trainium/Inferentia、Microsoft Maia、Meta MTIA、OpenAI/Broadcom、华为昇腾、寒武纪、燧原 |
 | **NPU** | 神经网络处理单元，手机/PC/边缘/汽车 | Apple Neural Engine、Qualcomm Hexagon、MediaTek APU、Arm Ethos、Hailo、Axelera、Kneron |
 | **AI IP** | 只卖 IP，不卖芯片 | Arm、Imagination、VeriSilicon、Cadence、Synopsys、Ceva、Andes、Expedera |
@@ -54,7 +54,6 @@ AI 芯片不是单一品类，至少包括：
 | **Biren（壁仞）** | BR100/BR104 等 GPGPU；中国 |
 | **MetaX（沐曦）** | 曦云/曦索系列 GPGPU；中国 |
 | **Iluvatar（天数智芯）** | 天垓/智铠 GPGPU；中国 |
-| **Tianshu（燧原）** | 云端 AI ASIC（非 GPGPU）；中国 |
 | **Jingjia Micro（景嘉微）** | 国产 GPU；中国 |
 | **Loongson（龙芯）** | 集成 GPU；中国 |
 | **Innosilicon / VeriSilicon** | GPU/AI IP 与定制芯片 |
@@ -74,7 +73,7 @@ AI 芯片不是单一品类，至少包括：
 | **Huawei（华为）** | 昇腾 Ascend 910/950 系列 |
 | **Cambricon（寒武纪）** | 思元 MLU 系列 |
 | **Enflame（燧原）** | 云端训练/推理 ASIC |
-| **Biren / Moore Threads / MetaX / Iluvatar / Tianshu / Hango** | 中国云端 AI 芯片 |
+| **Biren / Moore Threads / MetaX / Iluvatar / Enflame / Vastai（瀚博）** | 中国云端 AI 芯片 |
 | **Broadcom / Marvell / Alchip / GUC** | 为云厂商定制 AI ASIC 的设计服务 |
 
 ### 2.3 边缘/终端 NPU

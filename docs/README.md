@@ -12,6 +12,7 @@ The documents are primarily written in Chinese; the table below is the English i
 | [open-source-x86-survey.md](open-source-x86-survey.md) | 2026-11-03 | Survey of open-source x86 processors/chips: projects, licenses, x86-64 gap, lessons |
 | [x86-companies.md](x86-companies.md) | 2026-11-03 | Map of x86 chip companies: Intel/AMD, VIA/Zhaoxin/Hygon, DM&P/RDC, Montage, history and market |
 | [arm-companies.md](arm-companies.md) | 2026-11-05 | Map of ARM CPU/SoC companies: counts by category, server/mobile/MCU players, 2026 updates |
+| [ai-chip-companies.md](ai-chip-companies.md) | 2026-11-05 | Map of AI chip companies: GPU/NPU/TPU/ASIC counts, market share, China players, 2026 updates |
 | architecture.md | planned | Architecture manual: encoding, registers, exceptions, paging, instruction semantics |
 | [microarchitecture.md](microarchitecture.md) | v3.8 | Microarchitecture manual: Stage-A, Stage-B, comparison with Kunminghu V3, verification and known issues |
 | [verification.md](verification.md) | v3.8 | Verification manual: test matrix, coverage, performance, limitations, reproduce commands, gap to V3 |

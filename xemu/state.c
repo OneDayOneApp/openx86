@@ -5,6 +5,9 @@ XemuState xemu;
 uint8_t xemu_mem[XEMU_MEM_SIZE];
 
 void xemu_reset(void) {
+  xemu_tlb_flush();
+  xemu.dr[6] = 0xffff0ff0ull;
+  xemu.dr[7] = 0x00000400ull;
   memset(&xemu, 0, sizeof(xemu));
   xemu_exit_code = 0;
   memset(xemu_mem, 0, sizeof(xemu_mem));

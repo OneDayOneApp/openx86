@@ -17,6 +17,7 @@ static unsigned mem_mb = 0;
 static int batch = 0;
 static int trace = 0;
 static int pc_seen_add(uint64_t v);
+static void dump_regs(void);
 
 static int trace_cr = 0;
 static const char *watch_pc = NULL;
@@ -106,11 +107,13 @@ static int step_once(void) {
     unsigned long long addr = 0;
     if (sscanf(stop_at, "%llx", &addr) == 1 && xemu.rip == addr) {
       fprintf(stderr, "stop-at: reached 0x%llx after %lu instructions\n"
-              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx rbx=0x%llx\n",
+              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx rbx=0x%llx idtr=0x%llx cr2=0x%llx\n",
               (unsigned long long)addr, steps,
               (unsigned long long)xemu.gpr[0], (unsigned long long)xemu.gpr[1],
               (unsigned long long)xemu.gpr[2], (unsigned long long)xemu.gpr[6],
-              (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3]);
+              (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3],
+              (unsigned long long)xemu.idtr_base, (unsigned long long)xemu.cr2);
+      dump_regs();
       return 1;
     }
   }
@@ -291,6 +294,13 @@ int main(int argc, char **argv) {
       fprintf(stderr, "  #%zu 0x%llx\n", i, (unsigned long long)pc_ring_buf[idx]);
     }
   }
+  fprintf(stderr, "xemu: tlb hits=%llu misses=%llu\n",
+          (unsigned long long)tlb_hits, (unsigned long long)tlb_misses);
+  if (xemu_fault_pc)
+    fprintf(stderr, "xemu: last translation fault at rip=0x%llx va=0x%llx err=0x%llx\n",
+            (unsigned long long)xemu_fault_pc,
+            (unsigned long long)xemu_cr2_at_fault,
+            (unsigned long long)xemu_fault_err);
   for (int i = 0; i < 32; i++)
     if (xemu_exc_count[i])
       fprintf(stderr, "xemu: exception %d raised %llu times (pc=0x%llx err=0x%llx)\n", i,

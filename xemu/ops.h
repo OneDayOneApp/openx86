@@ -167,6 +167,7 @@ enum {
   Ops_FLDLN2, Ops_FNOP,
   Ops_FXSAVE = 168, Ops_FXRSTOR, Ops_CLFLUSH, Ops_LDMXCSR, Ops_STMXCSR,
   Ops_LFENCE, Ops_MFENCE, Ops_SFENCE, Ops_PREFETCH,
+  Ops_MOV_DR = 177,
   Ops_UNDEF = 255,
 };
 

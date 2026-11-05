@@ -179,6 +179,9 @@ static void init_tables(void) {
   set(twobyte, 0x07, DI(Ops_SYSRET, .modrm = 0));
   set(twobyte, 0x20, DI(Ops_MOV_CR, .modrm = 1, .dir = 0));
   set(twobyte, 0x22, DI(Ops_MOV_CR, .modrm = 1, .dir = 1));
+  /* Debug registers: 0F 21 reads DRn into a GPR, 0F 23 writes it. */
+  set(twobyte, 0x21, DI(Ops_MOV_DR, .modrm = 1, .dir = 0));
+  set(twobyte, 0x23, DI(Ops_MOV_DR, .modrm = 1, .dir = 1));
   set(twobyte, 0x30, DI(Ops_WRMSR, .modrm = 0));
   set(twobyte, 0x32, DI(Ops_RDMSR, .modrm = 0));
   set(twobyte, 0x0b, DI(Ops_UD2, .modrm = 0));
@@ -953,6 +956,12 @@ int xemu_decode(uint64_t rip, XemuInst *out) {
   }
   if (op == Ops_CPUID) { out->a_kind = XK_GPR; out->a_idx = 0; out->b_kind = XK_NONE; }
   if (op == Ops_MOV_CR) {
+    out->a_kind = dir == 1 ? XK_NONE : XK_GPR; out->a_idx = rm | (rexB << 3);
+    out->b_kind = XK_NONE; out->imm = (uint64_t)reg;
+    out->cond = (dir == 1) ? 1 : 0;
+    out->illegal = 0;
+  }
+  if (op == Ops_MOV_DR) {
     out->a_kind = dir == 1 ? XK_NONE : XK_GPR; out->a_idx = rm | (rexB << 3);
     out->b_kind = XK_NONE; out->imm = (uint64_t)reg;
     out->cond = (dir == 1) ? 1 : 0;

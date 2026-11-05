@@ -43,6 +43,7 @@ typedef struct {
   uint64_t efer, star, lstar, sfmask;
   uint64_t fs_base, gs_base, kernel_gs_base;
   uint32_t mxcsr;
+  uint64_t dr[8];   /* debug registers */
   /* P3: segmentation/TSS/privilege/interrupt state. */
   uint64_t gdtr_base;
   uint16_t gdtr_limit;
@@ -95,10 +96,14 @@ int xemu_mem_write(uint64_t addr, const void *buf, size_t n);
 int xemu_vread(uint64_t va, void *buf, size_t n);
 int xemu_vwrite(uint64_t va, const void *buf, size_t n);
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
+void xemu_tlb_flush(void);
+extern uint64_t tlb_hits, tlb_misses;
+void xemu_tlb_invlpg(uint64_t va);
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
 extern uint64_t xemu_exc_count[32];
 extern uint64_t xemu_exc_pc[32];
 extern uint64_t xemu_exc_err[32];
+extern int xemu_exc_delivered;
 /* Deliver an external interrupt (vector >= 32) if IF=1 and nothing is pending. */
 int xemu_request_irq(uint64_t vec);
 /* Advance the PIT-like timer; may set irq_pending. Called once per instruction. */
@@ -143,6 +148,8 @@ extern int xemu_trace_port;
 extern uint64_t xemu_port_out_count;
 extern uint64_t xemu_port_in_count;
 extern uint64_t xemu_fault_err;
+extern uint64_t xemu_cr2_at_fault;
+extern uint64_t xemu_fault_pc;
 extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;
 

@@ -282,6 +282,7 @@ int xemu_exec(const XemuInst *d) {
   int sz = d->opsz;
   uint16_t op = d->op;
   if (xemu_fault_pending) { xemu_fault_pending = 0; return 0; }
+  xemu_exc_delivered = 0;
   if (op == Ops_FXSAVE) {
     xemu_fpu_fxsave(xemu_ea(d));
     xemu.rip += d->len;
@@ -725,6 +726,12 @@ int xemu_exec(const XemuInst *d) {
       xemu.halted_cpu = 1;
       xemu.rip += d->len;
       return 0;
+    case Ops_MOV_DR: {
+      int dreg = (int)(d->imm & 7);
+      if (d->cond == 1) xemu.dr[dreg] = xemu.gpr[d->a_idx];
+      else write_reg(d->a_idx, xemu.dr[dreg], 8);
+      break;
+    }
     case Ops_MOV_CR: {
       /* 0F 20: r64 <- CRn (a_idx = destination GPR, cond = 0)
          0F 22: CRn <- r64 (a_idx = source GPR,      cond = 1) */
@@ -905,6 +912,7 @@ int xemu_exec(const XemuInst *d) {
       xemu_do_sysret();
       return 0;
     case Ops_INVLPG:
+      xemu_tlb_invlpg(xemu_ea(d));
       break;
     case Ops_UD2:
       xemu_raise_exc(6, 0, xemu.rip);
@@ -936,6 +944,12 @@ int xemu_exec(const XemuInst *d) {
       return -1;
   }
   if (xemu_fault_pending) { xemu_fault_pending = 0; xemu_after_inst(); return 0; }
+  if (xemu_exc_delivered) {
+    /* RIP already points into the handler: do not add the instruction
+     * length, and do not tick devices (the handler runs next). */
+    xemu_exc_delivered = 0;
+    return 0;
+  }
   xemu.rip += d->len;
   xemu_after_inst();
   if (xemu.irq_pending) {
