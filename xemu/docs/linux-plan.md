@@ -132,6 +132,20 @@ make XEMU_MEM_MB=512 xemu-bin
 | IDT 用物理读 | 开页后 IDT 读取失败，异常无法投递 |
 | RIP 相对操作数忽略段基址 | `mov %rax,%gs:disp(%rip)` 算错地址 |
 
+## L1 当前实测状态
+
+30M 条指令后：执行覆盖 320 个 64 字节代码粒度、**0 次端口写**、
+1 次 `#PF`（err=0，pc=`0xffffffff83077246`），终态停在
+`0xffffffff8309c87b` 的 `call *(...); jmp .` 死循环。
+
+该位置在 `.init` 段，且 `0xffffffff8309c870` 的 `%rdi` 指向
+`.rodata` 中的 `"PANIC: early exception 0x%02x IP %lx:%lx error %..."`。
+
+**因此这不是正常 idle，而是 early-exception 的 panic 循环。**
+`saved_command_line` 里没有 cmdline 副本，也印证内核未走到读取命令行的位置。
+
+下一步要查清 `0xffffffff83077246` 处 `rep movsq` 的源地址为何不可读。
+
 ## 下一步定位手段
 
 `xemu` 新增三个诊断开关，用于确认内核执行到哪个阶段：

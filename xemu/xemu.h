@@ -42,6 +42,7 @@ typedef struct {
   uint64_t cs, ss, ds, es, fs, gs;
   uint64_t efer, star, lstar, sfmask;
   uint64_t fs_base, gs_base, kernel_gs_base;
+  uint32_t mxcsr;
   /* P3: segmentation/TSS/privilege/interrupt state. */
   uint64_t gdtr_base;
   uint16_t gdtr_limit;
@@ -95,6 +96,9 @@ int xemu_vread(uint64_t va, void *buf, size_t n);
 int xemu_vwrite(uint64_t va, const void *buf, size_t n);
 int xemu_translate(uint64_t va, int write, int fetch, uint64_t *pa, uint64_t *errcode);
 void xemu_raise_exc(uint64_t vec, uint64_t err, uint64_t pc);
+extern uint64_t xemu_exc_count[32];
+extern uint64_t xemu_exc_pc[32];
+extern uint64_t xemu_exc_err[32];
 /* Deliver an external interrupt (vector >= 32) if IF=1 and nothing is pending. */
 int xemu_request_irq(uint64_t vec);
 /* Advance the PIT-like timer; may set irq_pending. Called once per instruction. */
@@ -126,6 +130,8 @@ int xemu_pic_ack(void);
 void xemu_after_inst(void);
 /* x87 */
 void xemu_fpu_reset(void);
+void xemu_fpu_fxsave(uint64_t addr);
+void xemu_fpu_fxrstor(uint64_t addr);
 int xemu_fpu_exec(const XemuInst *d);
 uint16_t xemu_fpu_cw(void);
 uint16_t xemu_fpu_sw(void);
@@ -135,6 +141,7 @@ uint64_t xemu_ea(const XemuInst *d);
 extern int xemu_console_serial;
 extern int xemu_trace_port;
 extern uint64_t xemu_port_out_count;
+extern uint64_t xemu_port_in_count;
 extern uint64_t xemu_fault_err;
 extern uint64_t xemu_exit_code;
 extern int xemu_fault_pending;
@@ -145,5 +152,6 @@ int xemu_decode(uint64_t rip, XemuInst *out);
 int xemu_exec(const XemuInst *inst);
 /* Load a Linux bzImage and set up the entry state (see boot.c). */
 int xemu_boot_kernel(const char *path, const char *cmdline);
+int xemu_boot_kernel_initrd(const char *path, const char *cmdline, const char *initrd);
 
 #endif
