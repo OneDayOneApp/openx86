@@ -32,6 +32,8 @@ int xemu_mem_read(uint64_t addr, void *buf, size_t n) {
 
 uint64_t xemu_watch_lo = 0, xemu_watch_hi = 0, xemu_watch_pc = 0, xemu_watch_val = 0;
 int xemu_watch_hit = 0, xemu_watch_en = 0, xemu_watch_byte = -1;
+uint64_t xemu_watch_va = 0, xemu_watch_va_pc = 0, xemu_watch_va_val = 0;
+int xemu_watch_va_hit = 0;
 int xemu_watch_skip = 0;
 uint64_t xemu_watch_steps = 0, xemu_watch_min_steps = 0;
 
@@ -314,6 +316,18 @@ static int vaccess(uint64_t va, void *buf, size_t n, int write, int fetch) {
     }
     size_t chunk = 0x1000 - (va & 0xfff);
     if (chunk > n) chunk = n;
+    if (write && xemu_watch_va && !xemu_watch_va_hit &&
+        xemu_watch_va >= va && xemu_watch_va < va + chunk) {
+      const uint8_t *wb = (const uint8_t *)buf;
+      uint8_t wv = wb[xemu_watch_va - va];
+      /* --watch-byte also filters the virtual watchpoint, so "who wrote the
+         value 1 to this stack slot" can be answered directly. */
+      if (xemu_watch_byte < 0 || wv == (uint8_t)xemu_watch_byte) {
+        xemu_watch_va_hit = 1;
+        xemu_watch_va_pc = xemu.rip;
+        xemu_watch_va_val = wv;
+      }
+    }
     if (write ? xemu_mem_write(pa, p, chunk) : xemu_mem_read(pa, p, chunk)) {
       if (getenv("XEMU_DBG_VA"))
         fprintf(stderr, "[va] %s va=0x%llx pa=0x%llx n=%zu rip=0x%llx\n",

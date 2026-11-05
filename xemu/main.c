@@ -71,6 +71,23 @@ static int load_image(const char *path) {
 
 static int step_once(void) {
   XemuInst inst;
+  if (stop_at) {
+    /* Checked before decoding: the stop address may itself be unfetchable
+       (e.g. a corrupted branch target), and that is exactly when we want to
+       stop and look at the recent PC history. */
+    unsigned long long addr = 0;
+    if (sscanf(stop_at, "%llx", &addr) == 1 && xemu.rip == addr) {
+      fprintf(stderr, "stop-at: reached 0x%llx after %lu instructions\n"
+              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx rbx=0x%llx idtr=0x%llx cr2=0x%llx\n",
+              (unsigned long long)addr, steps,
+              (unsigned long long)xemu.gpr[0], (unsigned long long)xemu.gpr[1],
+              (unsigned long long)xemu.gpr[2], (unsigned long long)xemu.gpr[6],
+              (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3],
+              (unsigned long long)xemu.idtr_base, (unsigned long long)xemu.cr2);
+      dump_regs();
+      return 1;
+    }
+  }
   if (trace_pc_fp) fprintf(trace_pc_fp, "0x%llx\n", (unsigned long long)xemu.rip);
   int rc = xemu_decode(xemu.rip, &inst);
   if (rc == 1) { steps++; return 0; } /* fetch fault delivered */
@@ -108,20 +125,6 @@ static int step_once(void) {
     if (pc_seen_add(gran))            /* 1 = newly inserted */
       fprintf(stderr, "PC 0x%llx\n", (unsigned long long)xemu.rip);
   }
-  if (stop_at) {
-    unsigned long long addr = 0;
-    if (sscanf(stop_at, "%llx", &addr) == 1 && xemu.rip == addr) {
-      fprintf(stderr, "stop-at: reached 0x%llx after %lu instructions\n"
-              "  rax=0x%llx rcx=0x%llx rdx=0x%llx rsi=0x%llx rdi=0x%llx rbx=0x%llx idtr=0x%llx cr2=0x%llx\n",
-              (unsigned long long)addr, steps,
-              (unsigned long long)xemu.gpr[0], (unsigned long long)xemu.gpr[1],
-              (unsigned long long)xemu.gpr[2], (unsigned long long)xemu.gpr[6],
-              (unsigned long long)xemu.gpr[7], (unsigned long long)xemu.gpr[3],
-              (unsigned long long)xemu.idtr_base, (unsigned long long)xemu.cr2);
-      dump_regs();
-      return 1;
-    }
-  }
   ring_add(xemu.rip, inst.op, inst.len);
   uint64_t prev_cs = xemu.cs, prev_ss = xemu.ss, prev_rip = xemu.rip;
   rc = xemu_exec(&inst);
@@ -142,6 +145,15 @@ static int step_once(void) {
   }
   steps++;
   return 0;
+}
+
+static void dump_pc_ring(void) {
+  size_t n = pc_ring_pos < (size_t)pc_ring ? pc_ring_pos : (size_t)pc_ring;
+  fprintf(stderr, "last %zu executed PCs:\n", n);
+  for (size_t i = 0; i < n; i++) {
+    size_t idx = (pc_ring_pos - n + i) % (size_t)pc_ring;
+    fprintf(stderr, "  #%zu 0x%llx\n", i, (unsigned long long)pc_ring_buf[idx]);
+  }
 }
 
 static void dump_regs(void) {
@@ -272,6 +284,7 @@ static void usage(const char *prog) {
   fprintf(stderr, "  --stop-at-exc=N     stop after the Nth exception delivery\n");
   fprintf(stderr, "  --watch-mem=LO:HI   stop at the first physical write into [LO,HI)\n");
   fprintf(stderr, "  --watch-byte=XX     only trigger if the written data contains byte XX\n");
+  fprintf(stderr, "  --watch-va=ADDR     stop at the first write to a virtual address\n");
   fprintf(stderr, "  --serial-stop=STR   stop once STR appears on the serial console\n");
   fprintf(stderr, "  --kernel FILE  boot a Linux bzImage via the 64-bit boot protocol\n");
   fprintf(stderr, "  --cmdline=STR  kernel command line (default: console=ttyS0)\n");
@@ -302,6 +315,10 @@ int main(int argc, char **argv) {
     else if (!strncmp(argv[i], "--watch-byte=", 13)) xemu_watch_byte = (int)strtol(argv[i] + 13, NULL, 16);
     else if (!strncmp(argv[i], "--watch-skip=", 13)) xemu_watch_skip = atoi(argv[i] + 13);
     else if (!strncmp(argv[i], "--watch-after=", 14)) xemu_watch_min_steps = strtoull(argv[i] + 14, NULL, 0);
+    else if (!strncmp(argv[i], "--watch-va=", 11)) {
+      xemu_watch_va = strtoull(argv[i] + 11, NULL, 16);
+      if (!pc_ring) pc_ring = 32;
+    }
     else if (!strncmp(argv[i], "--serial-stop=", 14)) xemu_serial_stop = argv[i] + 14;
     else if (!strncmp(argv[i], "--watch-mem=", 12)) {
       unsigned long long lo = 0, hi = 0;
@@ -340,7 +357,12 @@ int main(int argc, char **argv) {
   xemu_watch_steps = (uint64_t)steps;
   if (batch) {
     while (!xemu.halted && (long long)steps < max_steps) {
-      if (step_once() != 0) { dump_mem_and_exit(); dump_regs(); return 1; }
+      if (step_once() != 0) {
+        dump_mem_and_exit();
+        dump_regs();
+        if (pc_ring_buf && pc_ring_pos) dump_pc_ring();
+        return 1;
+      }
       xemu_watch_steps++;
       if (verbose_exc && xemu.rip == 0xffffffff819e23c0ull) {
         int32_t w = (int32_t)(uint32_t)xemu.gpr[1];
@@ -353,6 +375,14 @@ int main(int argc, char **argv) {
           dump_regs();
           break;
         }
+      }
+      if (xemu_watch_va_hit) {
+        fprintf(stderr, "watch-va: write to 0x%llx at rip=0x%llx value=0x%llx after %lu instructions\n",
+                (unsigned long long)xemu_watch_va, (unsigned long long)xemu_watch_va_pc,
+                (unsigned long long)xemu_watch_va_val, steps);
+        dump_regs();
+        if (pc_ring_buf && pc_ring_pos) dump_pc_ring();
+        break;
       }
       if (xemu_watch_hit) {
         fprintf(stderr, "watch: write to [0x%llx,0x%llx) at rip=0x%llx value=0x%llx after %lu instructions\n",
@@ -375,14 +405,7 @@ int main(int argc, char **argv) {
   if (trace_pc_fp) fclose(trace_pc_fp);
   if (find_str) find_in_memory(find_str);
   dump_mem_and_exit();
-  if (pc_ring_buf && pc_ring_pos) {
-    size_t n = pc_ring_pos < (size_t)pc_ring ? pc_ring_pos : (size_t)pc_ring;
-    fprintf(stderr, "last %zu executed PCs:\n", n);
-    for (size_t i = 0; i < n; i++) {
-      size_t idx = (pc_ring_pos - n + i) % (size_t)pc_ring;
-      fprintf(stderr, "  #%zu 0x%llx\n", i, (unsigned long long)pc_ring_buf[idx]);
-    }
-  }
+  if (pc_ring_buf && pc_ring_pos) dump_pc_ring();
   fprintf(stderr, "xemu: tlb hits=%llu misses=%llu\n",
           (unsigned long long)tlb_hits, (unsigned long long)tlb_misses);
   if (xemu_fault_pc)

@@ -162,6 +162,10 @@ extern int xemu_trace_exc;
 extern uint64_t xemu_watch_lo, xemu_watch_hi, xemu_watch_pc, xemu_watch_val;
 extern int xemu_watch_hit, xemu_watch_en, xemu_watch_byte;
 extern int xemu_watch_skip;   /* ignore the first N matching writes */
+/* Virtual-address watchpoint (--watch-va=ADDR): catches writes through the
+ * MMU, which is what you need for a user stack address. */
+extern uint64_t xemu_watch_va, xemu_watch_va_pc, xemu_watch_va_val;
+extern int xemu_watch_va_hit;
 /* The RTL subset core models no CS/SS state and hardcodes the same-level trap
  * frame selectors to SS=0/CS=8. difftest_init() turns this on so lockstep
  * compares against that model; the standalone runner keeps the real frame. */
